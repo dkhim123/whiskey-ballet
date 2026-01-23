@@ -1,0 +1,86 @@
+<svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Circular Background -->
+  <circle cx="250" cy="250" r="240" fill="#2C1810" stroke="#D4AF37" stroke-width="6"/>
+  
+  <!-- Inner Circle -->
+  <circle cx="250" cy="250" r="220" fill="none" stroke="#D4AF37" stroke-width="3"/>
+  
+  <!-- Mountain Silhouette -->
+  <path d="M 150 230 L 200 180 L 250 210 L 300 180 L 350 230" fill="none" stroke="#F5E6D3" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  
+  <!-- African Woman Silhouette -->
+  <g transform="translate(250, 250)">
+    <!-- Head/Face -->
+    <ellipse cx="0" cy="-20" rx="35" ry="40" fill="#F5E6D3"/>
+    
+    <!-- Traditional Headwrap -->
+    <path d="M -35 -45 Q -40 -60 -30 -70 Q -20 -75 0 -75 Q 20 -75 30 -70 Q 40 -60 35 -45 Z" fill="#6B0F1A"/>
+    <path d="M -30 -50 Q -35 -60 -25 -68 Q -15 -72 0 -72 Q 15 -72 25 -68 Q 35 -60 30 -50" fill="none" stroke="#D4AF37" stroke-width="2"/>
+    
+    <!-- Decorative beads on headwrap -->
+    <circle cx="-15" cy="-60" r="3" fill="#D4AF37"/>
+    <circle cx="0" cy="-65" r="3" fill="#D4AF37"/>
+    <circle cx="15" cy="-60" r="3" fill="#D4AF37"/>
+  </g>
+  
+  <!-- Wine Glass -->
+  <g transform="translate(280, 280)">
+    <!-- Glass bowl -->
+    <path d="M -15 -20 Q -18 0 -10 15 L -5 30 L 5 30 Q 13 0 18 -20 Z" fill="none" stroke="#F5E6D3" stroke-width="2.5"/>
+    <!-- Wine in glass -->
+    <path d="M -14 -15 Q -16 0 -9 12 L -5 25 L 5 25 Q 12 0 16 -15 Z" fill="#6B0F1A" opacity="0.8"/>
+    <!-- Stem -->
+    <line x1="0" y1="30" x2="0" y2="45" stroke="#F5E6D3" stroke-width="2"/>
+    <!-- Base -->
+    <ellipse cx="0" cy="45" rx="10" ry="3" fill="#F5E6D3"/>
+  </g>
+  
+  <!-- Decorative Scrolls (Left) -->
+  <g transform="translate(120, 280)">
+    <path d="M 0 0 Q -10 -10 -15 -5 Q -12 0 -8 5" fill="none" stroke="#D4AF37" stroke-width="2" stroke-linecap="round"/>
+    <path d="M -5 10 Q -15 15 -18 20 Q -15 22 -10 18" fill="none" stroke="#D4AF37" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="-10" cy="0" r="2" fill="#D4AF37"/>
+    <circle cx="-12" cy="15" r="2" fill="#D4AF37"/>
+  </g>
+  
+  <!-- Decorative Scrolls (Right) -->
+  <g transform="translate(380, 280)">
+    <path d="M 0 0 Q 10 -10 15 -5 Q 12 0 8 5" fill="none" stroke="#D4AF37" stroke-width="2" stroke-linecap="round"/>
+    <path d="M 5 10 Q 15 15 18 20 Q 15 22 10 18" fill="none" stroke="#D4AF37" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="10" cy="0" r="2" fill="#D4AF37"/>
+    <circle cx="12" cy="15" r="2" fill="#D4AF37"/>
+  </g>
+  
+  <!-- Top Text: WHISKEY BALLET -->
+  <path id="topCurve" d="M 100 105 Q 250 75 400 105" fill="none"/>
+  <text font-family="Georgia, serif" font-size="28" font-weight="bold" fill="#F5E6D3" letter-spacing="4">
+    <textPath href="#topCurve" startOffset="50%" text-anchor="middle">
+      WHISKEY
+    </textPath>
+  </text>
+  <path id="bottomCurve" d="M 100 135 Q 250 110 400 135" fill="none"/>
+  <text font-family="Georgia, serif" font-size="26" font-weight="bold" fill="#F5E6D3" letter-spacing="3">
+    <textPath href="#bottomCurve" startOffset="50%" text-anchor="middle">
+      BALLET
+    </textPath>
+  </text>
+  
+  <!-- Ribbon Banner -->
+  <g transform="translate(250, 370)">
+    <!-- Banner background -->
+    <path d="M -90 -10 L -95 10 L -70 0 L 0 5 L 70 0 L 95 10 L 90 -10 Z" fill="#F5E6D3"/>
+    <path d="M -90 -10 L -95 10 L -70 0 L 0 5 L 70 0 L 95 10 L 90 -10 Z" fill="none" stroke="#D4AF37" stroke-width="2"/>
+    <!-- Banner text: EST. 2024 -->
+    <text x="0" y="5" font-family="Georgia, serif" font-size="16" font-weight="bold" fill="#2C1810" text-anchor="middle">
+      EST. 2024
+    </text>
+  </g>
+  
+  <!-- Bottom Text: WINES & SPIRITS -->
+  <path id="bottomCurve" d="M 100 380 Q 250 420 400 380" fill="none"/>
+  <text font-family="Georgia, serif" font-size="28" font-weight="bold" fill="#F5E6D3" letter-spacing="6">
+    <textPath href="#bottomCurve" startOffset="50%" text-anchor="middle">
+      WINES & SPIRITS
+    </textPath>
+  </text>
+</svg>

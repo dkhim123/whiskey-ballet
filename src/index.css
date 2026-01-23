@@ -1,0 +1,308 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: system-ui, -apple-system, sans-serif;
+  
+  /* Whiskey Ballet Brand Colors - Premium Wine Aesthetic */
+  --color-gold: #D4AF37;
+  --color-gold-light: #E5C158;
+  --color-gold-dark: #B8941F;
+  --color-cream: #F5E6D3;
+  --color-cream-light: #FAF3E8;
+  --color-dark-brown: #2C1810;
+  --color-dark-brown-light: #3D2318;
+  --color-burgundy: #6B0F1A;
+  --color-burgundy-light: #8B1923;
+  --color-burgundy-dark: #4A0A12;
+  
+  /* Semantic Color Assignments */
+  --color-primary: #D4AF37; /* Gold */
+  --color-primary-light: #E5C158;
+  --color-primary-dark: #B8941F;
+  --color-secondary: #6B0F1A; /* Burgundy */
+  --color-secondary-light: #8B1923;
+  --color-secondary-dark: #4A0A12;
+  --color-background: #2C1810; /* Dark Brown */
+  --color-surface: #3D2318; /* Light Brown */
+  --color-border: #D4AF37; /* Gold borders */
+  --color-text-primary: #F5E6D3; /* Cream text on dark */
+  --color-text-secondary: #E5C158; /* Light gold */
+  --color-card-bg: #1a0f0a; /* Darker brown for cards */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --radius: 0.75rem;
+}
+
+* {
+  @apply transition-colors duration-200;
+}
+
+html {
+  @apply scroll-smooth;
+}
+
+/* Print styles for 80mm thermal receipt printer - Optimized for thermal printing */
+@media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+    box-sizing: border-box !important;
+  }
+
+  /* 80mm thermal paper - auto height, zero margins, no headers/footers */
+  @page {
+    size: 80mm auto;
+    margin: 0 !important;
+    /* Suppress browser headers and footers */
+    -webkit-print-margin-top: 0 !important;
+    -webkit-print-margin-bottom: 0 !important;
+    @top-left { content: none !important; }
+    @top-center { content: none !important; }
+    @top-right { content: none !important; }
+    @bottom-left { content: none !important; }
+    @bottom-center { content: none !important; }
+    @bottom-right { content: none !important; }
+  }
+
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 80mm !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  
+  /* Receipt takes FULL WIDTH of thermal paper */
+  .fixed.inset-0 {
+    position: static !important;
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 80mm !important;
+    height: auto !important;
+  }
+  
+  /* Receipt container - FULL WIDTH, ZERO padding, ZERO bottom space */
+  .fixed.inset-0 > div {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    background: white !important;
+    border: none !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+  
+  /* Remove ALL bottom spacing from last elements */
+  .fixed.inset-0 > div > *:last-child {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+  }
+  
+  /* Hide buttons */
+  .fixed.inset-0 button,
+  .print\\:hidden {
+    display: none !important;
+  }
+  
+  /* PURE BLACK text for thermal printer - maximum contrast */
+  .fixed.inset-0 *,
+  .fixed.inset-0 h1,
+  .fixed.inset-0 h2,
+  .fixed.inset-0 p,
+  .fixed.inset-0 span,
+  .fixed.inset-0 div {
+    color: #000000 !important;
+    font-weight: 900 !important;
+    background-color: transparent !important;
+    font-family: 'Arial Black', 'Courier New', monospace !important;
+    -webkit-font-smoothing: none !important;
+  }
+  
+  /* Logo - tiny */
+  .fixed.inset-0 svg {
+    width: 18mm !important;
+    height: 18mm !important;
+    margin: 0 auto 1mm auto !important;
+    display: block !important;
+  }
+  
+  .fixed.inset-0 svg circle {
+    fill: white !important;
+    stroke: #000000 !important;
+    stroke-width: 3px !important;
+  }
+  
+  .fixed.inset-0 svg text {
+    fill: #000000 !important;
+    font-weight: 900 !important;
+  }
+  
+  /* Add minimal padding only to text content, not container */
+  .fixed.inset-0 .p-1,
+  .fixed.inset-0 .px-1,
+  .fixed.inset-0 .border-b {
+    padding-left: 2mm !important;
+    padding-right: 2mm !important;
+  }
+  
+  /* Text sizes */
+  .fixed.inset-0 h1 {
+    font-size: 12pt !important;
+    line-height: 1.2 !important;
+    margin: 0.5mm 0 !important;
+    text-align: center !important;
+  }
+  
+  .fixed.inset-0 h2 {
+    font-size: 11pt !important;
+    line-height: 1.2 !important;
+    margin: 1mm 0 !important;
+    text-align: center !important;
+  }
+  
+  .fixed.inset-0 p,
+  .fixed.inset-0 span {
+    font-size: 9pt !important;
+    line-height: 1.3 !important;
+    margin: 0.5mm 0 !important;
+  }
+  
+  .fixed.inset-0 .text-xs {
+    font-size: 8pt !important;
+  }
+  
+  .fixed.inset-0 .text-\\[9px\\],
+  .fixed.inset-0 .text-\\[10px\\],
+  .fixed.inset-0 [class*="text-["] {
+    font-size: 7pt !important;
+  }
+  
+  /* TOTAL - Extra bold and right-aligned */
+  .fixed.inset-0 .text-base,
+  .fixed.inset-0 .text-sm {
+    font-size: 10pt !important;
+    font-weight: 900 !important;
+  }
+  
+  /* Full width flex containers */
+  .fixed.inset-0 .flex {
+    width: 100% !important;
+    display: flex !important;
+    justify-content: space-between !important;
+  }
+  
+  .fixed.inset-0 .overflow-y-auto {
+    overflow: visible !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+  
+  /* DASHED LINES for all separators - pure black */
+  .fixed.inset-0 .border-b,
+  .fixed.inset-0 .border-b-2 {
+    border-bottom: 1px dashed #000000 !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+  }
+  
+  .fixed.inset-0 .border-t,
+  .fixed.inset-0 .border-t-2 {
+    border-top: 1px dashed #000000 !important;
+    border-bottom: none !important;
+    border-left: none !important;
+    border-right: none !important;
+  }
+  
+  /* Double dashed for totals section - pure black */
+  .fixed.inset-0 .border-t-2.border-black {
+    border-top: 2px dashed #000000 !important;
+  }
+  
+  /* Remove side borders */
+  .fixed.inset-0 [class*="border"] {
+    border-left: none !important;
+    border-right: none !important;
+  }
+  
+  /* NO backgrounds */
+  .fixed.inset-0 .bg-gray-100 {
+    background: transparent !important;
+    padding: 1mm 0 !important;
+  }
+  
+  /* Minimal spacing */
+  .fixed.inset-0 .space-y-0 > * + * {
+    margin-top: 0.5mm !important;
+  }
+  
+  .fixed.inset-0 .mb-0\\.5,
+  .fixed.inset-0 .mb-1 {
+    margin-bottom: 0 !important;
+  }
+  
+  .fixed.inset-0 .mt-0\\.5,
+  .fixed.inset-0 .mt-1 {
+    margin-top: 0.5mm !important;
+  }
+  
+  .fixed.inset-0 .p-0\\.5,
+  .fixed.inset-0 .p-1 {
+    padding: 0 !important;
+  }
+  
+  .fixed.inset-0 .pt-0\\.5,
+  .fixed.inset-0 .pt-1 {
+    padding-top: 0.5mm !important;
+  }
+  
+  .fixed.inset-0 .pb-0,
+  .fixed.inset-0 .pb-1 {
+    padding-bottom: 0 !important;
+  }
+  
+  .fixed.inset-0 .py-0\\.5 {
+    padding-top: 0.5mm !important;
+    padding-bottom: 0 !important;
+  }
+  
+  /* NO rounded corners */
+  .fixed.inset-0 [class*="rounded"] {
+    border-radius: 0 !important;
+  }
+  
+  /* Right-align amounts */
+  .fixed.inset-0 .justify-between {
+    justify-content: space-between !important;
+  }
+  
+  .fixed.inset-0 .text-right {
+    text-align: right !important;
+  }
+
+  /* FORCE ZERO BOTTOM SPACING - Critical for thermal */
+  .fixed.inset-0 > div,
+  .fixed.inset-0 > div > div:last-child,
+  .fixed.inset-0 .overflow-y-auto > *:last-child {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  /* Remove any pseudo-elements creating space */
+  .fixed.inset-0::after,
+  .fixed.inset-0 *::after,
+  body::after,
+  html::after {
+    content: none !important;
+    display: none !important;
+    height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}

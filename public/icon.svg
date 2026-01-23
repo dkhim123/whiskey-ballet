@@ -1,0 +1,29 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle with wine gradient -->
+  <defs>
+    <linearGradient id="wineGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#6B0F1A;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2C1810;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#D4AF37;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#F4E5B2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#D4AF37;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <circle cx="256" cy="256" r="256" fill="url(#wineGradient)"/>
+  
+  <!-- Wine bottle silhouette -->
+  <path d="M 220 140 L 220 180 Q 200 190 200 220 L 200 380 Q 200 400 220 400 L 292 400 Q 312 400 312 380 L 312 220 Q 312 190 292 180 L 292 140 Q 292 120 276 120 L 236 120 Q 220 120 220 140 Z" 
+        fill="url(#goldGradient)" opacity="0.9"/>
+  
+  <!-- Wine glass accent -->
+  <path d="M 340 200 L 340 240 Q 340 260 360 270 L 360 320 L 350 320 L 350 340 L 390 340 L 390 320 L 380 320 L 380 270 Q 400 260 400 240 L 400 200 Z" 
+        fill="#D4AF37" opacity="0.7"/>
+  
+  <!-- WHISKEY BALLET text -->
+  <text x="256" y="430" font-family="Georgia, serif" font-size="44" font-weight="bold" fill="#D4AF37" text-anchor="middle">WHISKEY</text>
+  <text x="256" y="475" font-family="Georgia, serif" font-size="38" font-weight="bold" fill="#D4AF37" text-anchor="middle">BALLET</text>
+</svg>

@@ -1,0 +1,249 @@
+"use client"
+
+import { useState, useEffect, useRef } from "react"
+import LoginPage from "./views/LoginPage"
+import PosPage from "./views/PosPage"
+import InventoryPage from "./views/InventoryPage"
+import AdminDashboard from "./views/AdminDashboard"
+import CashierDashboard from "./views/CashierDashboard"
+import ManagerDashboard from "./views/ManagerDashboard"
+import ReportsPage from "./views/ReportsPage"
+import DataManagementPage from "./views/DataManagementPage"
+import SuppliersPage from "./views/SuppliersPage"
+import PurchaseOrdersPage from "./views/PurchaseOrdersPage"
+import SupplierPaymentsPage from "./views/SupplierPaymentsPage"
+import CustomersPage from "./views/CustomersPage"
+import ExpensesPage from "./views/ExpensesPage"
+import UserGuidePage from "./views/UserGuidePage"
+import AdminSettingsPage from "./views/AdminSettingsPage"
+import TransactionsHistoryPage from "./views/TransactionsHistoryPage"
+import Sidebar from "./components/Sidebar"
+import ScrollArea from "./components/ScrollArea"
+import PWAInstallPrompt from "./components/PWAInstallPrompt"
+import PWAUpdatePrompt from "./components/PWAUpdatePrompt"
+import ServiceWorkerRegistration from "./components/ServiceWorkerRegistration"
+import { ThemeProvider } from "./components/ThemeProvider"
+import { readData, writeData, getStorageMode, readSharedData, writeSharedData, migrateTransactionsPaymentStatus } from "./utils/storage"
+import { saveSession, loadSession, updateSessionPage, clearSession } from "./utils/session"
+import { initializeDefaultUsers, registerUser, getAdminIdForStorage } from "./utils/auth"
+import { calculateVAT, calculateProfit, calculateMargin } from "./utils/pricing"
+
+export default function App() {
+  const [currentPage, setCurrentPage] = useState("login")
+  const [userRole, setUserRole] = useState(null)
+  const [currentUser, setCurrentUser] = useState(null)
+  const [inventory, setInventory] = useState([])
+  const [storageMode, setStorageMode] = useState("web")
+
+  // Load data from storage on mount
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const mode = getStorageMode()
+        setStorageMode(mode)
+        
+        // Initialize default users (admin and cashier) if none exist - do in background
+        initializeDefaultUsers().catch(err => console.error("User init error:", err))
+        
+        // Restore user session with validation
+        const session = loadSession()
+        if (session) {
+          setUserRole(session.userRole)
+          setCurrentPage(session.currentPage)
+          setCurrentUser(session.user)
+          
+          // Get admin ID for storage (for cashiers/managers, uses their creator's ID)
+          const adminId = getAdminIdForStorage(session.user)
+          
+          // Load admin-specific inventory (isolated per admin)
+          readSharedData(adminId).then(data => {
+            if (data && data.inventory && data.inventory.length > 0) {
+              setInventory(data.inventory)
+            } else {
+              // Initialize with empty data - admin will populate their own inventory
+              writeSharedData({ 
+                inventory: [], 
+                transactions: [], 
+                suppliers: [],
+                purchaseOrders: [],
+                goodsReceivedNotes: [],
+                supplierPayments: [],
+                stockAdjustments: [],
+                customers: [], 
+                expenses: [],
+                settings: {
+                  storeName: 'Whiskey Ballet',
+                  currency: 'KES',
+                  vatRate: 0.16,
+                  vatEnabled: true,
+                  spendingLimitPercentage: 50,
+                  enableSpendingAlerts: true,
+                  lastBackupDate: null
+                },
+                lastSync: null
+              }, adminId)
+              setInventory([])
+            }
+          }).catch(err => console.error("Data load error:", err))
+        }
+      } catch (error) {
+        console.error("Error loading data:", error)
+      }
+    }
+    
+    loadData()
+  }, [])
+
+  // Periodically refresh inventory to sync changes from other users (e.g., cashier marking PO as received)
+  // NOTE: This is a lightweight sync. InventoryPage manages its own data loading/saving.
+  useEffect(() => {
+    if (!currentUser) return // Only refresh when logged in
+    
+    const refreshInventory = async () => {
+      try {
+        const adminId = getAdminIdForStorage(currentUser)
+        const data = await readSharedData(adminId)
+        if (data && data.inventory) {
+          setInventory(data.inventory)
+        }
+      } catch (error) {
+        console.error("Error refreshing inventory:", error)
+      }
+    }
+    
+    // Refresh every 30 seconds to sync changes made by other users
+    const interval = setInterval(refreshInventory, 30000)
+    return () => clearInterval(interval)
+  }, [currentUser])
+
+  // NOTE: Removed auto-save useEffect here - InventoryPage now manages its own saves
+  // This prevents race conditions and ensures atomic database operations
+
+  const handleLogin = async (role, user) => {
+    setUserRole(role)
+    setCurrentUser(user)
+    let page = "pos"
+    if (role === "admin") {
+      page = "admin-dashboard"
+    } else if (role === "manager") {
+      page = "manager-dashboard"
+    }
+    setCurrentPage(page)
+    
+    // Save session using utility with user data
+    saveSession(role, page, user)
+    
+    // Run one-time migration to fix transaction paymentStatus
+    try {
+      const migrationResult = await migrateTransactionsPaymentStatus()
+      if (migrationResult.migrated > 0) {
+        console.log(`✅ Migration: Fixed ${migrationResult.migrated} transactions`)
+      }
+    } catch (migrationError) {
+      console.error('Migration failed:', migrationError)
+      // Don't block login if migration fails
+    }
+    
+    // Get admin ID for storage (for cashiers/managers, uses their creator's ID)
+    const adminId = getAdminIdForStorage(user)
+    
+    // Pure offline: Load from admin-specific local storage only
+    try {
+      const data = await readSharedData(adminId)
+      if (data && data.inventory && data.inventory.length > 0) {
+        console.log(`✅ Loaded data from admin-specific storage (adminId: ${adminId})`)
+        setInventory(data.inventory)
+      } else {
+        // Initialize with empty data - admin will populate their own inventory
+        console.log(`✅ Initializing admin ${adminId} with empty data`)
+        const emptyData = {
+          inventory: [],
+          transactions: [],
+          suppliers: [],
+          purchaseOrders: [],
+          goodsReceivedNotes: [],
+          supplierPayments: [],
+          stockAdjustments: [],
+          customers: [],
+          expenses: [],
+          settings: {
+            storeName: 'Whiskey Ballet',
+            currency: 'KES',
+            vatRate: 0.16,
+            vatEnabled: true,
+            spendingLimitPercentage: 50,
+            enableSpendingAlerts: true,
+            lastBackupDate: null
+          },
+          lastSync: null
+        }
+        await writeSharedData(emptyData, adminId)
+        setInventory([])
+      }
+    } catch (error) {
+      console.error("Error loading data:", error)
+      
+      // Fall back to empty inventory on error
+      setInventory([])
+    }
+  }
+
+  const handleLogout = () => {
+    setCurrentPage("login")
+    setUserRole(null)
+    setCurrentUser(null)
+    
+    // Clear session using utility
+    clearSession()
+  }
+
+  // No loading screen - go straight to login or main app
+  if (currentPage === "login") {
+    return (
+      <ThemeProvider>
+        <LoginPage onLogin={handleLogin} />
+      </ThemeProvider>
+    )
+  }
+
+  return (
+    <ThemeProvider>
+      <div className="flex h-screen bg-background">
+        <Sidebar 
+          currentPage={currentPage} 
+          onPageChange={(page) => {
+            setCurrentPage(page)
+            // Update session using utility
+            updateSessionPage(page)
+          }} 
+          userRole={userRole} 
+          currentUser={currentUser}
+          onLogout={handleLogout} 
+        />
+        <ScrollArea className="flex-1">
+          {currentPage === "pos" && <PosPage key={currentUser?.id} inventory={inventory} onInventoryChange={setInventory} currentUser={currentUser} />}
+          {currentPage === "inventory" && <InventoryPage key={currentUser?.id} inventory={inventory} onInventoryChange={setInventory} currentUser={currentUser} />}
+          {currentPage === "customers" && <CustomersPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "admin-dashboard" && <AdminDashboard key={currentUser?.id} currentUser={currentUser} onPageChange={(page) => {
+            setCurrentPage(page)
+            updateSessionPage(page)
+          }} />}
+          {currentPage === "cashier-dashboard" && <CashierDashboard key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "manager-dashboard" && <ManagerDashboard key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "reports" && <ReportsPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "transactions-history" && <TransactionsHistoryPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "expenses" && <ExpensesPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "user-guide" && <UserGuidePage />}
+          {currentPage === "data-management" && <DataManagementPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "admin-settings" && <AdminSettingsPage currentUser={currentUser} inventory={inventory} />}
+          {currentPage === "suppliers" && <SuppliersPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "purchase-orders" && <PurchaseOrdersPage key={currentUser?.id} currentUser={currentUser} onInventoryChange={setInventory} />}
+          {currentPage === "supplier-payments" && <SupplierPaymentsPage key={currentUser?.id} currentUser={currentUser} />}
+        </ScrollArea>
+        <PWAInstallPrompt />
+        <PWAUpdatePrompt />
+        <ServiceWorkerRegistration />
+      </div>
+    </ThemeProvider>
+  )
+}

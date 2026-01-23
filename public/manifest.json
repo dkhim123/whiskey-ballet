@@ -1,0 +1,36 @@
+{
+  "name": "Whiskey Ballet - Wines & Spirits POS",
+  "short_name": "Whiskey Ballet",
+  "version": "1.0.0",
+  "description": "Premium Wines & Spirits Point of Sale and Inventory Management System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2C1810",
+  "theme_color": "#D4AF37",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "shortcuts": [
+    {
+      "name": "POS System",
+      "short_name": "POS",
+      "description": "Open Point of Sale",
+      "url": "/?page=pos",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Inventory",
+      "short_name": "Inventory",
+      "description": "Manage Inventory",
+      "url": "/?page=inventory",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
+    }
+  ]
+}
