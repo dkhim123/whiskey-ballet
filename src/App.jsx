@@ -27,6 +27,10 @@ import { readData, writeData, getStorageMode, readSharedData, writeSharedData, m
 import { saveSession, loadSession, updateSessionPage, clearSession } from "./utils/session"
 import { initializeDefaultUsers, registerUser, getAdminIdForStorage } from "./utils/auth"
 import { calculateVAT, calculateProfit, calculateMargin } from "./utils/pricing"
+// Initialize Firebase (cloud database for real-time sync and backup)
+import { db, auth, isFirebaseConfigured } from "./config/firebase"
+// Initialize branch service for multi-branch management
+import { initializeBranchService } from "./services/branchService"
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState("login")
@@ -41,6 +45,9 @@ export default function App() {
       try {
         const mode = getStorageMode()
         setStorageMode(mode)
+        
+        // Initialize branch service for offline queue and sync
+        initializeBranchService()
         
         // Initialize default users (admin and cashier) if none exist - do in background
         initializeDefaultUsers().catch(err => console.error("User init error:", err))
