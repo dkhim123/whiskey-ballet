@@ -1,0 +1,356 @@
+/**
+ * Branch Service - Manages branch data with hybrid storage (IndexedDB + Firebase)
+ * Stores branches locally for offline access and syncs to Firestore for real-time updates
+ */
+
+import { db, isFirebaseConfigured } from '../config/firebase';
+import { collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { getDB, STORES } from '../utils/indexedDBStorage';
+
+const STORAGE_KEY = 'pos-branches';
+const COLLECTION_NAME = 'branches';
+
+// Offline queue for operations when Firebase is unavailable
+let offlineQueue = [];
+
+/**
+ * Get current admin ID from localStorage
+ */
+function getCurrentAdminId() {
+  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+  return currentUser.adminId || currentUser.id;
+}
+
+/**
+ * Save branch to localStorage (quick access)
+ */
+function saveBranchLocally(branch) {
+  try {
+    const branches = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    const existingIndex = branches.findIndex(b => b.id === branch.id);
+    
+    if (existingIndex >= 0) {
+      branches[existingIndex] = branch;
+    } else {
+      branches.push(branch);
+    }
+    
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(branches));
+    return true;
+  } catch (error) {
+    console.error('Error saving branch locally:', error);
+    return false;
+  }
+}
+
+/**
+ * Save branch to IndexedDB (persistent storage)
+ */
+async function saveBranchToIndexedDB(branch) {
+  try {
+    const indexedDb = await getDB();
+    const tx = indexedDb.transaction(STORES.BRANCHES, 'readwrite');
+    const store = tx.objectStore(STORES.BRANCHES);
+    
+    await store.put(branch);
+    await tx.done;
+    
+    return true;
+  } catch (error) {
+    console.error('Error saving branch to IndexedDB:', error);
+    return false;
+  }
+}
+
+/**
+ * Save branch to Firebase Firestore
+ */
+async function saveBranchToFirebase(branch) {
+  if (!isFirebaseConfigured()) {
+    console.warn('Firebase not configured, skipping cloud sync');
+    return false;
+  }
+
+  try {
+    const adminId = getCurrentAdminId();
+    const branchRef = doc(db, 'organizations', adminId, COLLECTION_NAME, branch.id);
+    
+    await setDoc(branchRef, {
+      ...branch,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+    
+    console.log('✅ Branch synced to Firebase:', branch.name);
+    return true;
+  } catch (error) {
+    console.error('Error saving branch to Firebase:', error);
+    // Add to offline queue
+    offlineQueue.push({ action: 'save', data: branch });
+    return false;
+  }
+}
+
+/**
+ * Create a new branch (hybrid storage)
+ * @param {Object} branchData - { name, description }
+ * @returns {Promise<Object>} Created branch object
+ */
+export async function createBranch(branchData) {
+  const adminId = getCurrentAdminId();
+  const branchId = `branch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const branch = {
+    id: branchId,
+    adminId,
+    name: branchData.name,
+    description: branchData.description || '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    isActive: true
+  };
+
+  // Save to all storage layers
+  saveBranchLocally(branch);
+  await saveBranchToIndexedDB(branch);
+  await saveBranchToFirebase(branch);
+
+  console.log('✅ Branch created:', branch.name);
+  return branch;
+}
+
+/**
+ * Get all branches for current admin
+ * @returns {Promise<Array>} Array of branch objects
+ */
+export async function getAllBranches() {
+  const adminId = getCurrentAdminId();
+  
+  try {
+    // Try Firebase first (most up-to-date)
+    if (isFirebaseConfigured()) {
+      try {
+        const branchesRef = collection(db, 'organizations', adminId, COLLECTION_NAME);
+        const snapshot = await getDocs(branchesRef);
+        
+        const branches = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        // Update local cache
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(branches));
+        
+        console.log(`📦 Loaded ${branches.length} branches from Firebase`);
+        return branches.filter(b => b.isActive);
+      } catch (firebaseError) {
+        console.warn('Firebase unavailable, falling back to local storage:', firebaseError.message);
+      }
+    }
+
+    // Fallback to IndexedDB
+    const indexedDb = await getDB();
+    const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
+    const store = tx.objectStore(STORES.BRANCHES);
+    const allBranches = await store.getAll();
+    
+    const userBranches = allBranches.filter(b => b.adminId === adminId && b.isActive);
+    
+    console.log(`📦 Loaded ${userBranches.length} branches from IndexedDB`);
+    return userBranches;
+  } catch (error) {
+    console.error('Error loading branches from IndexedDB:', error);
+    
+    // Final fallback to localStorage
+    const branches = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    console.log(`📦 Loaded ${branches.length} branches from localStorage`);
+    return branches.filter(b => b.isActive);
+  }
+}
+
+/**
+ * Get a single branch by ID
+ * @param {string} branchId - Branch ID
+ * @returns {Promise<Object|null>} Branch object or null
+ */
+export async function getBranch(branchId) {
+  const adminId = getCurrentAdminId();
+  
+  try {
+    // Try Firebase first
+    if (isFirebaseConfigured()) {
+      try {
+        const branchRef = doc(db, 'organizations', adminId, COLLECTION_NAME, branchId);
+        const snapshot = await getDoc(branchRef);
+        
+        if (snapshot.exists()) {
+          return { id: snapshot.id, ...snapshot.data() };
+        }
+      } catch (firebaseError) {
+        console.warn('Firebase unavailable, checking local storage:', firebaseError.message);
+      }
+    }
+
+    // Fallback to IndexedDB
+    const indexedDb = await getDB();
+    const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
+    const store = tx.objectStore(STORES.BRANCHES);
+    const branch = await store.get(branchId);
+    
+    if (branch && branch.adminId === adminId) {
+      return branch;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error getting branch:', error);
+    return null;
+  }
+}
+
+/**
+ * Update an existing branch
+ * @param {string} branchId - Branch ID
+ * @param {Object} updates - Fields to update
+ * @returns {Promise<Object>} Updated branch object
+ */
+export async function updateBranch(branchId, updates) {
+  const adminId = getCurrentAdminId();
+  const existingBranch = await getBranch(branchId);
+  
+  if (!existingBranch) {
+    throw new Error('Branch not found');
+  }
+
+  const updatedBranch = {
+    ...existingBranch,
+    ...updates,
+    updatedAt: new Date().toISOString()
+  };
+
+  // Update all storage layers
+  saveBranchLocally(updatedBranch);
+  await saveBranchToIndexedDB(updatedBranch);
+  await saveBranchToFirebase(updatedBranch);
+
+  console.log('✅ Branch updated:', updatedBranch.name);
+  return updatedBranch;
+}
+
+/**
+ * Delete a branch (soft delete - sets isActive to false)
+ * @param {string} branchId - Branch ID
+ * @returns {Promise<boolean>} Success status
+ */
+export async function deleteBranch(branchId) {
+  return await updateBranch(branchId, { isActive: false });
+}
+
+/**
+ * Get all cashiers assigned to a specific branch
+ * @param {string} branchId - Branch ID
+ * @returns {Promise<Array>} Array of user objects
+ */
+export async function getBranchCashiers(branchId) {
+  try {
+    const indexedDb = await getDB();
+    const tx = indexedDb.transaction(STORES.USERS, 'readonly');
+    const store = tx.objectStore(STORES.USERS);
+    const allUsers = await store.getAll();
+    
+    const branchCashiers = allUsers.filter(user => 
+      user.branchId === branchId && user.role === 'cashier'
+    );
+    
+    return branchCashiers;
+  } catch (error) {
+    console.error('Error getting branch cashiers:', error);
+    return [];
+  }
+}
+
+/**
+ * Get default branch ID for current admin
+ * If only one branch exists, return it. Otherwise, return null.
+ * @returns {Promise<string|null>} Branch ID or null
+ */
+export async function getDefaultBranchId() {
+  const branches = await getAllBranches();
+  
+  if (branches.length === 1) {
+    return branches[0].id;
+  }
+  
+  // Check localStorage for user's last selected branch
+  const lastBranchId = localStorage.getItem('lastSelectedBranch');
+  if (lastBranchId && branches.some(b => b.id === lastBranchId)) {
+    return lastBranchId;
+  }
+  
+  return null;
+}
+
+/**
+ * Set default branch for quick access
+ * @param {string} branchId - Branch ID
+ */
+export function setDefaultBranch(branchId) {
+  localStorage.setItem('lastSelectedBranch', branchId);
+}
+
+/**
+ * Process offline queue when connection is restored
+ */
+export async function processOfflineQueue() {
+  if (offlineQueue.length === 0) return;
+  
+  console.log(`📤 Processing ${offlineQueue.length} offline operations...`);
+  
+  const queue = [...offlineQueue];
+  offlineQueue = [];
+  
+  for (const operation of queue) {
+    try {
+      if (operation.action === 'save') {
+        await saveBranchToFirebase(operation.data);
+      }
+    } catch (error) {
+      console.error('Error processing offline operation:', error);
+      offlineQueue.push(operation); // Re-add to queue
+    }
+  }
+}
+
+/**
+ * Initialize branch service (check for offline queue)
+ */
+export function initializeBranchService() {
+  // Load offline queue from localStorage if exists
+  try {
+    const savedQueue = localStorage.getItem('branch-offline-queue');
+    if (savedQueue) {
+      offlineQueue = JSON.parse(savedQueue);
+      localStorage.removeItem('branch-offline-queue');
+      
+      // Process queue when online
+      if (navigator.onLine && isFirebaseConfigured()) {
+        processOfflineQueue();
+      }
+    }
+  } catch (error) {
+    console.error('Error loading offline queue:', error);
+  }
+
+  // Save queue on page unload
+  window.addEventListener('beforeunload', () => {
+    if (offlineQueue.length > 0) {
+      localStorage.setItem('branch-offline-queue', JSON.stringify(offlineQueue));
+    }
+  });
+
+  // Process queue when connection is restored
+  window.addEventListener('online', () => {
+    if (isFirebaseConfigured()) {
+      processOfflineQueue();
+    }
+  });
+}
