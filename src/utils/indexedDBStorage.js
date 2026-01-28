@@ -12,7 +12,8 @@ const DB_NAME = 'WhiskeyBalletPOS'
 // v2: Added soft delete (deletedAt indexes)
 // v3: Data preservation improvements
 // v4: Branding updates and database stability fixes
-const DB_VERSION = 4
+// v5: Added branches and users stores for multi-branch support
+const DB_VERSION = 5
 
 // Object store names
 const STORES = {
@@ -25,7 +26,9 @@ const STORES = {
   STOCK_ADJUSTMENTS: 'stockAdjustments',
   CUSTOMERS: 'customers',
   EXPENSES: 'expenses',
-  SETTINGS: 'settings'
+  SETTINGS: 'settings',
+  BRANCHES: 'branches',
+  USERS: 'users'
 }
 
 /**
@@ -211,6 +214,23 @@ const initDB = () => {
       if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
         const settingsStore = db.createObjectStore(STORES.SETTINGS, { keyPath: 'adminId' })
         console.log('✅ Created settings store')
+      }
+
+      // Branches store (version 5+)
+      if (!db.objectStoreNames.contains(STORES.BRANCHES)) {
+        const branchesStore = db.createObjectStore(STORES.BRANCHES, { keyPath: 'id' })
+        branchesStore.createIndex('adminId', 'adminId', { unique: false })
+        branchesStore.createIndex('isActive', ['adminId', 'isActive'], { unique: false })
+        console.log('✅ Created branches store')
+      }
+
+      // Users store (version 5+) - for cashier management
+      if (!db.objectStoreNames.contains(STORES.USERS)) {
+        const usersStore = db.createObjectStore(STORES.USERS, { keyPath: 'id' })
+        usersStore.createIndex('adminId', 'adminId', { unique: false })
+        usersStore.createIndex('branchId', 'branchId', { unique: false })
+        usersStore.createIndex('role', ['adminId', 'role'], { unique: false })
+        console.log('✅ Created users store')
       }
 
       console.log('✅ All IndexedDB stores created successfully')

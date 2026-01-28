@@ -296,7 +296,7 @@ export const authenticateUser = async (email, password) => {
     // Successful authentication - reset attempts
     resetLoginAttempts(email)
     
-    // Return user data (without password hash)
+    // Return user data (without password hash) - INCLUDE branchId!
     return {
       success: true,
       user: {
@@ -304,7 +304,9 @@ export const authenticateUser = async (email, password) => {
         email: user.email,
         role: user.role,
         name: user.name,
-        createdBy: user.createdBy
+        createdBy: user.createdBy,
+        branchId: user.branchId, // ⭐ CRITICAL: Include branchId for branch isolation
+        adminId: user.adminId || user.createdBy // For accessing shared data
       }
     }
   } catch (error) {
@@ -321,7 +323,7 @@ export const authenticateUser = async (email, password) => {
  * @param {string} role - User's role (admin, manager, cashier)
  * @param {number} createdBy - ID of the admin who created this user (optional, for user hierarchy)
  */
-export const registerUser = async (name, email, password, role, createdBy = null) => {
+export const registerUser = async (name, email, password, role, createdBy = null, branchId = null) => {
   try {
     // Sanitize and validate inputs
     const sanitizedName = name?.trim()
@@ -375,7 +377,8 @@ export const registerUser = async (name, email, password, role, createdBy = null
       name: sanitizedName,
       createdAt: new Date().toISOString(),
       isActive: true,
-      createdBy: createdBy // Track which admin created this user
+      createdBy: createdBy, // Track which admin created this user
+      branchId: branchId || null // Assign branch for cashiers
     }
     
     // Add user to storage
@@ -389,7 +392,8 @@ export const registerUser = async (name, email, password, role, createdBy = null
         email: newUser.email,
         role: newUser.role,
         name: newUser.name,
-        createdBy: newUser.createdBy
+        createdBy: newUser.createdBy,
+        branchId: newUser.branchId // ⭐ Include branchId in response
       }
     }
   } catch (error) {
@@ -471,7 +475,8 @@ export const getAllUsers = async (adminId = null) => {
     name: user.name,
     isActive: user.isActive,
     createdAt: user.createdAt,
-    createdBy: user.createdBy
+    createdBy: user.createdBy,
+    branchId: user.branchId // CRITICAL: Include branch assignment
   }))
 }
 
@@ -531,6 +536,48 @@ export const adminResetPassword = async (targetEmail, newPassword, adminEmail) =
   } catch (error) {
     console.error('Error resetting password:', error)
     return { success: false, error: 'Failed to reset password' }
+  }
+}
+
+/**
+ * Update user branch assignment (admin only)
+ */
+export const updateUserBranch = async (userId, branchId, adminEmail) => {
+  try {
+    console.log('🔧 updateUserBranch called with:', { userId, branchId, adminEmail })
+    
+    const users = await getUsersFromStorage()
+    console.log('👥 Loaded users:', users.length)
+    
+    const admin = users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase())
+    console.log('🔐 Admin check:', admin ? `Found: ${admin.email}` : 'Not found')
+    
+    if (!admin || admin.role !== 'admin') {
+      console.error('❌ Unauthorized - not admin')
+      return { success: false, error: 'Unauthorized' }
+    }
+    
+    const userIndex = users.findIndex(u => u.id === userId)
+    console.log('🔍 User index:', userIndex, 'User ID to update:', userId)
+    
+    if (userIndex === -1) {
+      console.error('❌ User not found with ID:', userId)
+      return { success: false, error: 'User not found' }
+    }
+    
+    console.log('📝 Updating user:', users[userIndex].name, 'with branchId:', branchId)
+    
+    // Update the branch assignment
+    users[userIndex].branchId = branchId
+    users[userIndex].updatedAt = new Date().toISOString()
+    
+    const saved = await saveUsersToStorage(users)
+    console.log('💾 Save result:', saved)
+    
+    return { success: true, message: 'Branch assigned successfully', user: users[userIndex] }
+  } catch (error) {
+    console.error('💥 Error updating user branch:', error)
+    return { success: false, error: 'Failed to update branch assignment' }
   }
 }
 

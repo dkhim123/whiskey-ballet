@@ -4,13 +4,13 @@ import { useState, useEffect } from "react"
 import { getActivities } from "../utils/activityLog"
 import { formatRelativeTime } from "../utils/timeFormat"
 
-export default function ActivityFeed({ currentUser, limit = 10 }) {
+export default function ActivityFeed({ currentUser, limit = 10, branchId = null }) {
   const [activities, setActivities] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     loadActivities()
-  }, [currentUser])
+  }, [currentUser, branchId])
 
   const loadActivities = async () => {
     if (!currentUser?.id) return
@@ -19,7 +19,27 @@ export default function ActivityFeed({ currentUser, limit = 10 }) {
     try {
       const result = await getActivities(currentUser.id, {}, limit)
       if (result.success) {
-        setActivities(result.activities)
+        let filteredActivities = result.activities
+        
+        // Filter by branchId if provided
+        if (branchId) {
+          filteredActivities = filteredActivities.filter(activity => {
+            // Filter activities related to transactions or users with matching branchId
+            if (activity.details?.branchId) {
+              return activity.details.branchId === branchId
+            }
+            if (activity.metadata?.branchId) {
+              return activity.metadata.branchId === branchId
+            }
+            if (activity.relatedData?.branchId) {
+              return activity.relatedData.branchId === branchId
+            }
+            // For now, exclude activities without branchId when filtering
+            return false
+          })
+        }
+        
+        setActivities(filteredActivities)
       }
     } catch (error) {
       console.error('Error loading activities:', error)

@@ -55,19 +55,62 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         if (!userId) return
 
         const adminId = getAdminIdForStorage(currentUser)
-        console.log(`🔍 PosPage: Loading shared data for user ${currentUser.name} (AdminId: ${adminId})`)
+        const branchId = currentUser?.branchId
+        
+        // CRITICAL DEBUG: Check user branchId
+        if (!branchId && currentUser.role === 'cashier') {
+          console.error(`🚨 CRITICAL: User ${currentUser.name} is a cashier but has NO branchId!`)
+          console.error('User object:', currentUser)
+        }
+        
+        console.log(`🔍 PosPage: Loading data for ${currentUser.name} (Role: ${currentUser.role}, Branch: ${branchId || 'NONE'})`)
         
         const sharedData = await readSharedData(adminId)
         
-        console.log(`📦 PosPage: Loaded ${sharedData.inventory?.length || 0} products, ${sharedData.transactions?.length || 0} transactions, ${sharedData.customers?.length || 0} customers`)
+        // CRITICAL DEBUG: Check product branchIds
+        const totalProducts = (sharedData.inventory || []).length
+        const productsWithBranch = (sharedData.inventory || []).filter(i => i.branchId).length
+        const productsWithoutBranch = totalProducts - productsWithBranch
         
-        setInventory(sharedData.inventory || [])
-        setTransactions(sharedData.transactions || [])
+        console.log(`📦 Total products in DB: ${totalProducts}`)  
+        console.log(`✅ Products WITH branchId: ${productsWithBranch}`)
+        console.log(`❌ Products WITHOUT branchId: ${productsWithoutBranch}`)
+        
+        // Filter inventory and transactions by branchId with STRICT validation
+        let filteredInventory = sharedData.inventory || []
+        let filteredTransactions = sharedData.transactions || []
+        
+        if (branchId) {
+          // STRICT: Only items with matching branchId (exclude undefined)
+          filteredInventory = filteredInventory.filter(i => {
+            const hasMatch = i.branchId === branchId
+            if (!i.branchId && hasMatch) {
+              console.error(`🚨 BUG DETECTED: Product "${i.name}" has undefined branchId but passed filter!`)
+            }
+            return i.branchId && i.branchId === branchId
+          })
+          filteredTransactions = filteredTransactions.filter(t => t.branchId && t.branchId === branchId)
+          
+          console.log(`🔒 FILTERED for branch "${branchId}": ${filteredInventory.length} products`)
+          console.log('Sample products:', filteredInventory.slice(0, 3).map(p => `${p.name} (branch: ${p.branchId})`).join(', '))
+          
+          if (productsWithoutBranch > 0) {
+            console.warn(`⚠️ ${productsWithoutBranch} products excluded (no branchId) - RUN MIGRATION!`)
+          }
+        } else if (currentUser.role === 'cashier') {
+          // Cashier with no branch - show nothing
+          console.error(`🚨 Cashier ${currentUser.name} has no branch - showing EMPTY inventory!`)
+          filteredInventory = []
+          filteredTransactions = []
+        }
+        
+        setInventory(filteredInventory)
+        setTransactions(filteredTransactions)
         setCustomers(sharedData.customers || [])
         
         // Also update parent component
         if (onInventoryChange) {
-          onInventoryChange(sharedData.inventory || [])
+          onInventoryChange(filteredInventory)
         }
       } catch (error) {
         console.error('Error loading shared data:', error)
@@ -302,13 +345,26 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
     const finalPaymentMethod = method || paymentMethod || 'cash'
     const finalCustomer = customer || selectedCustomer
     
-    // Calculate updated inventory based on current cart
-    const updatedInventory = inventory.map((item) => {
+    // CRITICAL CHECK: If cashier has no branchId, ABORT
+    if (currentUser.role === 'cashier' && !currentUser.branchId) {
+      console.error(`🚨 CRITICAL: Cashier ${currentUser.name} has NO branchId! Cannot complete sale.`)
+      alert(`ERROR: Your account is missing branch assignment. Please logout and login again. Sale was NOT completed.`)
+      return
+    }
+    
+    // Calculate updated inventory for CURRENT BRANCH ONLY based on cart
+    const updatedBranchInventory = inventory.map((item) => {
       const cartItem = cart.find((c) => c.id === item.id)
       if (cartItem) {
         return { ...item, quantity: item.quantity - cartItem.quantity }
       }
       return item
+    })
+    
+    // DEBUG: Log what's in updatedBranchInventory
+    console.log(`🔍 PosPage: updatedBranchInventory has ${updatedBranchInventory.length} items`)
+    updatedBranchInventory.forEach((item, index) => {
+      console.log(`   ${index + 1}. ${item.name} - branchId: ${item.branchId}, id: ${item.id}, qty: ${item.quantity}`)
     })
     
     // Save transaction AND inventory to SHARED storage atomically
@@ -336,6 +392,7 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         userId: userId, // Track which user made the transaction
         cashier: currentUser?.name || 'Unknown',
         cashierId: userId,
+        branchId: currentUser?.branchId ?? 'NO_BRANCH', // Track which branch this sale belongs to
         customerId: finalCustomer?.id || null,
         customerName: finalCustomer?.name || null,
         items: itemsWithVAT.map(item => ({
@@ -364,6 +421,11 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         ageVerifiedAt: new Date().toISOString(),
         ageVerifiedBy: currentUser?.name || 'Unknown'
       }
+      
+      console.log('💳 Transaction saved with branchId:', transaction.branchId, '(from user:', currentUser?.name, ')')
+            if (!transaction.branchId || transaction.branchId === 'NO_BRANCH') {
+              console.warn('❗ Transaction branchId missing or invalid! User:', currentUser)
+            }
       
       const transactions = sharedData.transactions || []
       transactions.push(transaction)
@@ -407,17 +469,56 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         updatedExpenses.push(expenseEntry)
       }
       
+      // CRITICAL: Merge inventory from all branches to prevent data loss
+      const allInventoryItems = sharedData.inventory || []
+      const currentBranch = currentUser.branchId
+      
+      // Filter out items from current branch (we'll replace them with updated quantities)
+      const otherBranchItems = currentBranch 
+        ? allInventoryItems.filter(item => item.branchId !== currentBranch)
+        : []
+      
+      // Combine: other branches' items (unchanged) + current branch items (updated quantities)
+      const mergedInventory = [
+        ...otherBranchItems,
+        ...updatedBranchInventory
+      ]
+      
+      // DEBUG: Log detailed breakdown of merged inventory
+      console.log(`💾 PosPage: Merging inventory - Other branches: ${otherBranchItems.length}, Current branch: ${updatedBranchInventory.length}, Total: ${mergedInventory.length}`)
+      console.log(`🔍 Merged inventory breakdown:`)
+      const branchBreakdown = {}
+      mergedInventory.forEach(item => {
+        const branch = item.branchId || 'NO_BRANCH'
+        branchBreakdown[branch] = (branchBreakdown[branch] || 0) + 1
+        console.log(`   - ${item.name} (ID: ${item.id}, Branch: ${item.branchId}, Qty: ${item.quantity})`)
+      })
+      console.log(`📊 By branch:`, branchBreakdown)
+      
       // Save inventory, transactions, and customers to admin-specific storage
-      console.log(`💾 PosPage: Saving transaction with ${updatedInventory.length} products, ${transactions.length} transactions`)
+      console.log(`💾 PosPage: Saving transaction with ${mergedInventory.length} products, ${transactions.length} transactions`)
+      
+      // DEBUG: What are we actually saving?
+      console.log(`🚨 ABOUT TO SAVE - Inventory items:`)
+      mergedInventory.forEach(item => {
+        console.log(`   ${item.name}: branchId="${item.branchId}", id="${item.id}", qty=${item.quantity}`)
+      })
       
       await writeSharedData({
         ...sharedData,
-        inventory: updatedInventory,
+        inventory: mergedInventory,
         transactions: transactions,
         customers: updatedCustomers
       }, adminId)
       
       console.log(`✅ PosPage: Transaction saved successfully`)
+      
+      // DEBUG: Verify what was saved by reading it back
+      const verifyData = await readSharedData(adminId)
+      console.log(`🔍 VERIFICATION - After save, DB has ${verifyData.inventory?.length || 0} items:`)
+      verifyData.inventory?.forEach((item, idx) => {
+        console.log(`   ${idx + 1}. ${item.name}: branchId="${item.branchId}", id="${item.id}", qty=${item.quantity}`)
+      })
       
       // Save expenses to user-specific storage (only admin can see expenses)
       await writeData({
@@ -425,14 +526,14 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         expenses: updatedExpenses
       }, userId)
       
-      // Update local state immediately for instant UI feedback
-      setInventory(updatedInventory)
+      // Update local state immediately for instant UI feedback (use branch-specific inventory for UI)
+      setInventory(updatedBranchInventory)
       setTransactions(transactions)
       setCustomers(updatedCustomers)
       
       // Also update parent component
       if (onInventoryChange) {
-        onInventoryChange(updatedInventory)
+        onInventoryChange(updatedBranchInventory)
       }
       
       // Log activity
@@ -445,7 +546,8 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
           total: total,
           paymentMethod: finalPaymentMethod,
           customerId: finalCustomer?.id,
-          customerName: finalCustomer?.name
+          customerName: finalCustomer?.name,
+          branchId: currentUser?.branchId || null
         },
         currentUser
       )
@@ -686,12 +788,14 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
                   onAddProduct={addToCart} 
                   cart={cart}
                   selectedCustomer={selectedCustomer}
+                  branchId={currentUser?.branchId}
                 />
               ) : (
                 <ProductGrid 
                   products={paginatedProducts} 
                   onAddProduct={addToCart} 
-                  cart={cart} 
+                  cart={cart}
+                  branchId={currentUser?.branchId}
                 />
               )}
             </div>

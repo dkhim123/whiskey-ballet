@@ -1,4 +1,49 @@
 /**
+ * Migrate transactions to set branchId for missing/legacy records
+ * Attempts to infer branchId from cashierId or userId if possible
+ * @param {string|number} adminId - Admin ID for isolation
+ * @param {Array} users - Array of user objects with id and branchId
+ * @returns {Promise<{success: boolean, migrated: number}>}
+ */
+export const migrateTransactionsBranchId = async (adminId = null, users = []) => {
+  try {
+    const sharedData = await readSharedData(adminId)
+    if (!sharedData.transactions || !Array.isArray(sharedData.transactions)) {
+      return { success: true, migrated: 0 }
+    }
+    let migratedCount = 0
+    const updatedTransactions = sharedData.transactions.map(txn => {
+      if (!txn.branchId || txn.branchId === 'NO_BRANCH' || txn.branchId === null) {
+        // Try to infer branchId from cashierId or userId
+        let branchId = null
+        if (txn.cashierId && users.length > 0) {
+          const user = users.find(u => u.id === txn.cashierId)
+          branchId = user?.branchId || null
+        }
+        if (!branchId && txn.userId && users.length > 0) {
+          const user = users.find(u => u.id === txn.userId)
+          branchId = user?.branchId || null
+        }
+        if (branchId) {
+          migratedCount++
+          return { ...txn, branchId }
+        } else {
+          return { ...txn, branchId: 'NO_BRANCH' }
+        }
+      }
+      return txn
+    })
+    if (migratedCount > 0) {
+      const success = await writeSharedData({ ...sharedData, transactions: updatedTransactions }, adminId)
+      return { success, migrated: migratedCount }
+    }
+    return { success: true, migrated: 0 }
+  } catch (error) {
+    console.error('Error migrating transactions branchId:', error)
+    return { success: false, migrated: 0, error: error.message }
+  }
+}
+/**
  * Storage utility that works both in web (localStorage/IndexedDB) and Electron (file system)
  * Now supports user-specific data isolation with IndexedDB for large datasets
  */

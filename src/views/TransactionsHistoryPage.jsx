@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import TopBar from "../components/TopBar"
 import AdminTrashBin from "../components/AdminTrashBin"
 import TransactionDetailsModal from "../components/TransactionDetailsModal"
+import BranchSelector from "../components/BranchSelector"
 import { readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
 import { exportTransactionsToCSV } from "../utils/csvExport"
@@ -19,6 +20,9 @@ export default function TransactionsHistoryPage({ currentUser }) {
   const [showTrashBin, setShowTrashBin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showCancelled, setShowCancelled] = useState(true) // Show cancelled by default
+  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
+  const [selectedCashier, setSelectedCashier] = useState('')
+  const [cashiers, setCashiers] = useState([])
   
   // Filter states
   const [dateFilter, setDateFilter] = useState('all') // 'today', 'week', 'month', 'all', 'custom'
@@ -33,7 +37,7 @@ export default function TransactionsHistoryPage({ currentUser }) {
 
   useEffect(() => {
     loadTransactions()
-  }, [currentUser])
+  }, [currentUser, selectedBranch, selectedCashier])
 
   const loadTransactions = async () => {
     try {
@@ -47,10 +51,57 @@ export default function TransactionsHistoryPage({ currentUser }) {
       const adminId = getAdminIdForStorage(currentUser)
       const sharedData = await readSharedData(adminId)
       const allTransactions = sharedData.transactions || []
+      const users = sharedData.users || []
+      
+      // Filter transactions by branch and role
+      let filteredTransactions = allTransactions
+      
+      if (currentUser.role === 'cashier') {
+        // Cashiers can only see transactions from their branch
+        const cashierBranch = currentUser.branchId
+        if (!cashierBranch) {
+          console.warn(`⚠️ Cashier ${currentUser.name} has NO branchId assigned! Cannot filter transactions.`)
+          filteredTransactions = []
+        } else {
+          filteredTransactions = allTransactions.filter(t => {
+            // STRICT: Only show transactions that explicitly match the cashier's branch
+            const matches = t.branchId === cashierBranch
+            if (!t.branchId) {
+              console.log(`⚠️ Transaction ${t.id} has NO branchId - excluding from cashier view`)
+            }
+            return matches
+          })
+          console.log(`👤 Cashier ${currentUser.name} viewing ${filteredTransactions.length} transactions from branch ${cashierBranch}`)
+          console.log(`   Total transactions: ${allTransactions.length}, Unassigned: ${allTransactions.filter(t => !t.branchId).length}`)
+        }
+      } else if (currentUser.role === 'admin') {
+        // Admin can filter by branch
+        if (selectedBranch) {
+          filteredTransactions = allTransactions.filter(t => t.branchId === selectedBranch)
+          console.log(`👨‍💼 Admin viewing ${filteredTransactions.length} transactions from branch ${selectedBranch}`)
+        }
+        
+        // Further filter by cashier if selected
+        if (selectedCashier) {
+          filteredTransactions = filteredTransactions.filter(t => t.userId === selectedCashier)
+          console.log(`👨‍💼 Admin viewing ${filteredTransactions.length} transactions from cashier ${selectedCashier}`)
+        }
+        
+        // Update cashiers list for the selected branch
+        const branchCashiers = selectedBranch 
+          ? users.filter(u => u.role === 'cashier' && u.branchId === selectedBranch)
+          : users.filter(u => u.role === 'cashier')
+        setCashiers(branchCashiers)
+        
+        // Reset selected cashier if not in filtered list
+        if (selectedCashier && !branchCashiers.some(c => c.id === selectedCashier)) {
+          setSelectedCashier('')
+        }
+      }
       
       // Sort by timestamp descending (newest first)
       // Shows all transactions regardless of payment status (completed, pending, or cancelled)
-      const sortedTransactions = allTransactions
+      const sortedTransactions = filteredTransactions
         .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
       
       setTransactions(sortedTransactions)
@@ -274,6 +325,61 @@ export default function TransactionsHistoryPage({ currentUser }) {
   return (
     <div className="min-h-screen bg-background">
       <TopBar title="📊 Transaction History" />
+      
+      {/* Branch and Cashier Filters - Admin Only */}
+      {currentUser?.role === 'admin' && (
+        <div className="px-6 py-4 bg-muted/30 border-b border-border">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <BranchSelector
+                currentUser={currentUser}
+                selectedBranch={selectedBranch}
+                onBranchChange={(branchId) => {
+                  setSelectedBranch(branchId)
+                  setSelectedCashier('') // Reset cashier when branch changes
+                  setCurrentPage(1)
+                }}
+              />
+            </div>
+            {selectedBranch && cashiers.length > 0 && (
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-muted-foreground mb-2">
+                  Filter by Cashier
+                </label>
+                <select
+                  value={selectedCashier}
+                  onChange={(e) => {
+                    setSelectedCashier(e.target.value)
+                    setCurrentPage(1)
+                  }}
+                  className="w-full px-4 py-2 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="">All Cashiers</option>
+                  {cashiers.map(cashier => (
+                    <option key={cashier.id} value={cashier.id}>
+                      {cashier.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Cashier Branch Info */}
+      {currentUser?.role === 'cashier' && currentUser.branchId && (
+        <div className="px-6 py-3 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-800">
+          <div className="max-w-7xl mx-auto flex items-center gap-2 text-sm">
+            <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span className="text-blue-900 dark:text-blue-300 font-medium">
+              Viewing transactions for your branch
+            </span>
+          </div>
+        </div>
+      )}
       
       <div className="p-6 max-w-7xl mx-auto space-y-6">
         {/* Filter Section */}

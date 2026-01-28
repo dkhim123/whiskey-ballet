@@ -4,8 +4,9 @@ import { useState, useEffect } from "react"
 import { Eye, EyeOff } from "lucide-react"
 import TopBar from "../components/TopBar"
 import PWAInstallPrompt from "../components/PWAInstallPrompt"
-import { getAllUsers, updateUserPassword, deactivateUser, registerUser } from "../utils/auth"
+import { getAllUsers, updateUserPassword, deactivateUser, registerUser, updateUserBranch } from "../utils/auth"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
+import { getAllBranches } from "../services/branchService"
 
 // Default state for new user form
 const DEFAULT_USER_DATA = {
@@ -13,6 +14,7 @@ const DEFAULT_USER_DATA = {
   email: "",
   password: "",
   role: "cashier",
+  branchId: "",
   permissions: {
     canViewReports: false,
     canManageInventory: true,
@@ -27,6 +29,7 @@ const ADMIN_PASSWORD_OVERRIDE = ''
 
 export default function AdminSettingsPage({ currentUser, inventory = [] }) {
   const [users, setUsers] = useState([])
+  const [branches, setBranches] = useState([])
   const [selectedUser, setSelectedUser] = useState(null)
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [showPermissionsModal, setShowPermissionsModal] = useState(false)
@@ -42,6 +45,8 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [showAddUserPassword, setShowAddUserPassword] = useState(false)
   const [showCredentialsModal, setShowCredentialsModal] = useState(false)
+  const [showBranchModal, setShowBranchModal] = useState(false)
+  const [selectedBranch, setSelectedBranch] = useState("")
 
   // New user form state
   const [newUserData, setNewUserData] = useState(DEFAULT_USER_DATA)
@@ -81,19 +86,31 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
     )
   }
 
-  // Load users on component mount
+  // Load users and branches on component mount
   useEffect(() => {
     loadUsers()
+    loadBranches()
   }, [currentUser])
 
   const loadUsers = async () => {
     try {
       // Pass currentUser.id to filter users created by this admin
       const allUsers = await getAllUsers(currentUser?.id)
+      console.log('👥 Loaded users:', allUsers.map(u => ({ name: u.name, role: u.role, branchId: u.branchId })))
       setUsers(allUsers)
     } catch (error) {
       console.error("Error loading users:", error)
       setError("Failed to load users")
+    }
+  }
+
+  const loadBranches = async () => {
+    try {
+      const allBranches = await getAllBranches()
+      console.log('🏢 Loaded branches:', allBranches.map(b => ({ id: b.id, name: b.name })))
+      setBranches(allBranches.filter(b => b.isActive))
+    } catch (error) {
+      console.error("Error loading branches:", error)
     }
   }
 
@@ -164,12 +181,20 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
     setLoading(true)
 
     try {
+      // Validate branch assignment for cashiers
+      if (newUserData.role === 'cashier' && !newUserData.branchId) {
+        setError("Please assign a branch for this cashier")
+        setLoading(false)
+        return
+      }
+
       const result = await registerUser(
         newUserData.name,
         newUserData.email,
         newUserData.password,
         newUserData.role,
-        currentUser?.id // Pass the current admin's ID
+        currentUser?.id, // Pass the current admin's ID
+        newUserData.branchId // Pass the branch assignment
       )
 
       if (result.success) {
@@ -197,6 +222,55 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
       }
     } catch (error) {
       setError("An error occurred while creating user")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleBranchAssignment = async () => {
+    console.log('🏢 Branch Assignment Started:', {
+      userId: selectedUser?.id,
+      userName: selectedUser?.name,
+      selectedBranch,
+      adminEmail: currentUser?.email
+    })
+
+    if (!selectedBranch) {
+      setError("Please select a branch")
+      return
+    }
+
+    setLoading(true)
+    setError("")
+    setSuccess("")
+
+    try {
+      console.log('📞 Calling updateUserBranch...')
+      const result = await updateUserBranch(selectedUser.id, selectedBranch, currentUser.email)
+      console.log('✅ updateUserBranch result:', result)
+      
+      if (result.success) {
+        setSuccess(`Branch assigned successfully to ${selectedUser.name}`)
+        await loadUsers()
+        
+        // Notify other components (e.g., BranchManagement) to refresh
+        window.dispatchEvent(new CustomEvent('branchAssignmentChanged'))
+        
+        // Close modal after showing success message
+        setTimeout(() => {
+          setShowBranchModal(false)
+          setSelectedUser(null)
+          setSelectedBranch("")
+          setSuccess("")
+          setError("")
+        }, 1500)
+      } else {
+        console.error('❌ Assignment failed:', result.error)
+        setError(result.error || "Failed to assign branch")
+      }
+    } catch (error) {
+      console.error('💥 Exception during assignment:', error)
+      setError("An error occurred while assigning branch")
     } finally {
       setLoading(false)
     }
@@ -342,6 +416,9 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                       Role
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      Branch
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                       Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -368,6 +445,46 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                         }`}>
                           {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-muted-foreground">
+                        {user.branchId ? (
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-1 text-xs font-medium rounded-md bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-300">
+                              {branches.find(b => b.id === user.branchId)?.name || 'Unknown Branch'}
+                            </span>
+                            {user.role === 'cashier' && (
+                              <button
+                                onClick={() => {
+                                  setSelectedUser(user)
+                                  setSelectedBranch(user.branchId || "")
+                                  setShowBranchModal(true)
+                                }}
+                                className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                                title="Change branch"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </div>
+                        ) : user.role === 'cashier' ? (
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-1 text-xs font-medium rounded-md bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 flex items-center gap-1">
+                              ⚠️ No branch
+                            </span>
+                            <button
+                              onClick={() => {
+                                setSelectedUser(user)
+                                setSelectedBranch(user.branchId || "")
+                                setShowBranchModal(true)
+                              }}
+                              className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                            >
+                              Assign
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground/50 italic text-xs">—</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
@@ -581,6 +698,33 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                 </select>
               </div>
 
+              {/* Branch Selection - Only for Cashiers */}
+              {newUserData.role === 'cashier' && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    Assign to Branch <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={newUserData.branchId}
+                    onChange={(e) => setNewUserData({ ...newUserData, branchId: e.target.value })}
+                    className="w-full px-3 py-2 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                    required={newUserData.role === 'cashier'}
+                  >
+                    <option value="">-- Select Branch --</option>
+                    {branches.map(branch => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name} {branch.location ? `(${branch.location})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {branches.length === 0 && (
+                    <p className="mt-2 text-xs text-yellow-600 dark:text-yellow-400">
+                      ⚠️ No branches available. Please create a branch first in the Branches page.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {error && (
                 <div className="text-red-600 dark:text-red-400 text-sm">
                   {error}
@@ -771,6 +915,84 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                 className="flex-1 px-4 py-2 bg-muted text-foreground rounded-lg hover:bg-muted/80 transition-colors font-medium"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Branch Assignment Modal */}
+      {showBranchModal && selectedUser && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-xl shadow-2xl border-2 border-border max-w-md w-full p-6">
+            <h3 className="text-xl font-bold text-foreground mb-4">
+              {selectedUser.branchId ? '🏢 Change Branch Assignment' : '🏢 Assign Branch'}
+            </h3>
+            
+            <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-sm text-blue-800 dark:text-blue-200">
+                <strong>User:</strong> {selectedUser.name} ({selectedUser.email})
+              </p>
+              {selectedUser.branchId && (
+                <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                  <strong>Current Branch:</strong> {branches.find(b => b.id === selectedUser.branchId)?.name || 'Unknown'}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Select Branch <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  className="w-full px-3 py-2 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                  autoFocus
+                >
+                  <option value="">-- Select Branch --</option>
+                  {branches.map(branch => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name} {branch.location ? `(${branch.location})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {error && (
+                <div className="text-red-600 dark:text-red-400 text-sm bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                  {error}
+                </div>
+              )}
+              
+              {success && (
+                <div className="text-green-600 dark:text-green-400 text-sm bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3">
+                  {success}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowBranchModal(false)
+                  setSelectedUser(null)
+                  setSelectedBranch("")
+                  setError("")
+                  setSuccess("")
+                }}
+                disabled={loading}
+                className="flex-1 px-4 py-2 bg-muted text-foreground rounded-lg hover:bg-muted/80 transition-colors font-medium disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBranchAssignment}
+                disabled={loading || !selectedBranch}
+                className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Assigning...' : selectedUser.branchId ? 'Update Branch' : 'Assign Branch'}
               </button>
             </div>
           </div>

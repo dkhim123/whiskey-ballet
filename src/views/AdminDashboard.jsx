@@ -7,12 +7,17 @@ import DashboardCard from "../components/DashboardCard"
 import RecentTransactions from "../components/RecentTransactions"
 import AccountabilityModal from "../components/AccountabilityModal"
 import ActivityFeed from "../components/ActivityFeed"
+import BranchSelector from "../components/BranchSelector"
 import { readData, readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
 import { toast } from "sonner"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
+import { checkIfMigrationNeeded, migrateDataToBranchIsolation } from "../utils/dataMigration"
 
 export default function AdminDashboard({ currentUser, onPageChange }) {
+  const [selectedBranch, setSelectedBranch] = useState('')
+  const [selectedCashier, setSelectedCashier] = useState('')
+  const [cashiers, setCashiers] = useState([])
   const [dashboardData, setDashboardData] = useState({
     cashCollected: 0,
     mpesaCollected: 0,
@@ -41,6 +46,41 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     }
   })
 
+  // Check for data migration on mount
+  useEffect(() => {
+    const checkMigration = async () => {
+      if (currentUser?.role === 'admin') {
+        const needsMigration = await checkIfMigrationNeeded(currentUser)
+        if (needsMigration) {
+          const confirmed = window.confirm(
+            'System Update Required\n\n' +
+            'Your system needs a one-time update to enable proper branch isolation.\n\n' +
+            'This will assign all existing data to branches to ensure cashiers only see their branch data.\n\n' +
+            'Click OK to proceed with the update (recommended).'
+          )
+          if (confirmed) {
+            // Get default branch from admin's branches or use first available branch
+            const defaultBranch = prompt(
+              'Enter the default Branch ID for existing data:\n' +
+              '(This will be assigned to items that don\'t have a branch yet)',
+              'uon'
+            )
+            if (defaultBranch) {
+              const result = await migrateDataToBranchIsolation(currentUser, defaultBranch.trim())
+              if (result.success) {
+                toast.success(`Migration complete! ${result.migratedCount} items updated.`)
+                window.location.reload() // Reload to show migrated data
+              } else {
+                toast.error('Migration failed: ' + result.error)
+              }
+            }
+          }
+        }
+      }
+    }
+    checkMigration()
+  }, [currentUser])
+
   useEffect(() => {
     const loadDashboardData = async () => {
       try {
@@ -55,6 +95,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
         const sharedData = await readSharedData(adminId)
         const transactions = sharedData.transactions || []
         const inventory = sharedData.inventory || []
+        const users = sharedData.users || []
         
         // Read from user-specific storage for expenses and settings
         const userData = await readData(userId)
@@ -66,11 +107,36 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
         today.setHours(0, 0, 0, 0)
         
         // Filter today's transactions (from all users - cashier and admin)
-        const todayTransactions = transactions.filter(t => {
+        let todayTransactions = transactions.filter(t => {
           const transDate = new Date(t.timestamp)
           transDate.setHours(0, 0, 0, 0)
           return transDate.getTime() === today.getTime()
         })
+        
+        // Filter cashiers by selected branch
+        const branchCashiers = selectedBranch 
+          ? users.filter(u => u.role === 'cashier' && u.branchId === selectedBranch)
+          : users.filter(u => u.role === 'cashier')
+        setCashiers(branchCashiers)
+        
+        // Reset selected cashier if it's not in the filtered list
+        if (selectedCashier && !branchCashiers.some(c => c.id === selectedCashier)) {
+          setSelectedCashier('')
+        }
+        
+        // Filter by selected branch if admin has chosen one
+        if (selectedBranch) {
+          console.log('🔍 Filtering by branch:', selectedBranch, 'Total transactions before filter:', todayTransactions.length)
+          todayTransactions = todayTransactions.filter(t => t.branchId === selectedBranch)
+          console.log('✅ After branch filter:', todayTransactions.length, 'transactions')
+        }
+        
+        // Filter by selected cashier if chosen
+        if (selectedCashier) {
+          console.log('🔍 Filtering by cashier:', selectedCashier)
+          todayTransactions = todayTransactions.filter(t => t.userId === selectedCashier)
+          console.log('✅ After cashier filter:', todayTransactions.length, 'transactions')
+        }
         
         // Calculate metrics from ALL transactions (whole mart earnings)
         // Include both regular sales AND loan repayments
@@ -137,7 +203,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
         ).length
         
         // Format recent transactions (last 5 from ALL users)
-        const recentTransactions = transactions
+        const recentTransactions = todayTransactions
           .slice(-5)
           .reverse()
           .map(t => {
@@ -189,7 +255,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     // Refresh every 30 seconds
     const interval = setInterval(loadDashboardData, 30000)
     return () => clearInterval(interval)
-  }, [currentUser])
+  }, [currentUser, selectedBranch, selectedCashier]) // Reload when branch or cashier filter changes
 
   const dismissNotification = (type) => {
     try {
@@ -210,6 +276,44 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
   return (
     <div className="flex flex-col h-full">
       <TopBar title="Admin Dashboard" subtitle="Overview of daily operations and wines & spirits earnings" />
+
+      {/* Branch and Cashier Filters - Admin Only */}
+      {currentUser?.role === 'admin' && (
+        <div className="px-3 sm:px-6 py-4 bg-muted/30 border-b border-border">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <BranchSelector
+                currentUser={currentUser}
+                selectedBranch={selectedBranch}
+                onBranchChange={(branchId) => {
+                  console.log('🏢 Branch changed to:', branchId, typeof branchId)
+                  setSelectedBranch(branchId)
+                  setSelectedCashier('') // Reset cashier when branch changes
+                }}
+              />
+            </div>
+            {selectedBranch && cashiers.length > 0 && (
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-muted-foreground mb-2">
+                  Filter by Cashier
+                </label>
+                <select
+                  value={selectedCashier}
+                  onChange={(e) => setSelectedCashier(e.target.value)}
+                  className="w-full px-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-foreground"
+                >
+                  <option value="">All Cashiers ({cashiers.length})</option>
+                  {cashiers.map(cashier => (
+                    <option key={cashier.id} value={cashier.id}>
+                      {cashier.name} - {cashier.phone}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="p-3 sm:p-6 flex-1">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-6 mb-6 sm:mb-8">
@@ -442,7 +546,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             transactions={dashboardData.recentTransactions} 
             fullTransactions={dashboardData.fullTransactions}
           />
-          <ActivityFeed currentUser={currentUser} limit={8} />
+          <ActivityFeed currentUser={currentUser} limit={8} branchId={selectedBranch} />
         </div>
       </div>
 
