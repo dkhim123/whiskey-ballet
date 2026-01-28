@@ -557,6 +557,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
           onClose={() => setShowAccountabilityModal(false)}
           dateRange="today"
           currentUser={currentUser}
+          selectedBranch={selectedBranch}
         />
       )}
     </div>

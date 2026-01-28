@@ -55,12 +55,7 @@ export default function App() {
             userName: session.user?.name 
           })
           setUserRole(session.userRole)
-          // Force admin dashboard if user is admin
-          if (session.userRole === 'admin') {
-            setCurrentPage('admin-dashboard')
-          } else {
-            setCurrentPage(session.currentPage)
-          }
+          setCurrentPage(session.currentPage) // Restore the actual page user was on
           setCurrentUser(session.user)
           // Get admin ID for storage (for cashiers/managers, uses their creator's ID)
           const adminId = getAdminIdForStorage(session.user)
@@ -131,11 +126,15 @@ export default function App() {
   const handleLogin = async (role, user) => {
     setUserRole(role)
     setCurrentUser(user)
+    
+    // Determine default page for new login (not page reload)
     let page = "pos"
     if (role === "admin") {
       page = "admin-dashboard"
     } else if (role === "manager") {
       page = "manager-dashboard"
+    } else if (role === "cashier") {
+      page = "cashier-dashboard"
     }
     setCurrentPage(page)
     

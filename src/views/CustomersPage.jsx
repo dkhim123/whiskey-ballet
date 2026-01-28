@@ -24,7 +24,14 @@ export default function CustomersPage({ currentUser }) {
 
         const adminId = getAdminIdForStorage(currentUser)
         const sharedData = await readSharedData(adminId)
-        setCustomers(sharedData.customers || [])
+        const loadedCustomers = sharedData.customers || []
+        
+        console.log(`📊 Loaded ${loadedCustomers.length} customers:`)
+        loadedCustomers.forEach((c, i) => {
+          console.log(`   ${i + 1}. ${c.name} - Created by: ${c.createdBy?.name || 'UNKNOWN'} (Branch: ${c.branchId || 'NONE'})`)
+        })
+        
+        setCustomers(loadedCustomers)
       } catch (error) {
         console.error('Error loading customers:', error)
       }
@@ -33,7 +40,20 @@ export default function CustomersPage({ currentUser }) {
     loadCustomers()
   }, [currentUser])
 
-  const filteredCustomers = customers.filter((customer) =>
+  // Filter by branch first - strict branch isolation for cashiers
+  const branchFilteredCustomers = currentUser?.role === 'cashier'
+    ? customers.filter(c => {
+        const matches = c.branchId === currentUser.branchId
+        if (!c.branchId) {
+          console.log(`⚠️ Customer "${c.name}" has NO branchId assigned!`)
+        }
+        return matches
+      })
+    : customers // Admin sees all
+  
+  console.log(`👥 CustomersPage: User ${currentUser?.name} (${currentUser?.role}) sees ${branchFilteredCustomers.length}/${customers.length} customers (Branch: ${currentUser?.branchId || 'N/A'})`)
+    
+  const filteredCustomers = branchFilteredCustomers.filter((customer) =>
     customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     customer.phone?.toLowerCase().includes(searchTerm.toLowerCase())
   )
@@ -53,9 +73,27 @@ export default function CustomersPage({ currentUser }) {
       const customerToAdd = {
         ...newCustomer,
         id: maxId + 1,
-        balance: 0,
+        branchId: currentUser?.branchId || '',
+        createdBy: {
+          id: currentUser?.id,
+          name: currentUser?.name || currentUser?.email,
+          role: currentUser?.role
+        },
+        balance: newCustomer.loanAmount || 0, // Initial balance equals initial loan
         createdDate: new Date().toISOString(),
       }
+
+      console.log('👤 Creating customer with metadata:', {
+        name: customerToAdd.name,
+        branchId: customerToAdd.branchId,
+        createdBy: customerToAdd.createdBy,
+        currentUser: {
+          id: currentUser?.id,
+          name: currentUser?.name,
+          email: currentUser?.email,
+          role: currentUser?.role
+        }
+      })
 
       const updatedCustomers = [...(sharedData.customers || []), customerToAdd]
       
@@ -84,9 +122,24 @@ export default function CustomersPage({ currentUser }) {
 
       const adminId = getAdminIdForStorage(currentUser)
       const sharedData = await readSharedData(adminId)
-      const updatedCustomers = customers.map(c => 
-        c.id === updatedCustomer.id ? updatedCustomer : c
-      )
+      const allCustomers = sharedData.customers || []
+      const updatedCustomers = allCustomers.map(c => {
+        if (c.id === updatedCustomer.id) {
+          // Preserve or add branchId and createdBy if missing
+          return {
+            ...updatedCustomer,
+            branchId: updatedCustomer.branchId || c.branchId || currentUser?.branchId || '',
+            createdBy: c.createdBy || {
+              id: currentUser?.id,
+              name: currentUser?.name || currentUser?.email,
+              role: currentUser?.role
+            },
+            // Preserve balance if not in updatedCustomer
+            balance: updatedCustomer.balance !== undefined ? updatedCustomer.balance : (c.balance || 0)
+          }
+        }
+        return c
+      })
 
       // Save to admin-specific storage
       await writeSharedData({
@@ -108,13 +161,14 @@ export default function CustomersPage({ currentUser }) {
     setShowDetailsModal(true)
   }
 
-  const totalCustomers = customers.length
-  const customersWithLoans = customers.filter(c => c.loanAmount > 0).length
-  const totalLoansOwed = customers.reduce((sum, c) => sum + (c.loanAmount || 0), 0)
+  // Calculate stats from branch-filtered customers, not all customers
+  const totalCustomers = branchFilteredCustomers.length
+  const customersWithLoans = branchFilteredCustomers.filter(c => c.loanAmount > 0).length
+  const totalLoansOwed = branchFilteredCustomers.reduce((sum, c) => sum + (c.loanAmount || 0), 0)
   
-  // Check for loans due today
+  // Check for loans due today (from branch-filtered customers)
   const today = new Date().toISOString().split('T')[0]
-  const loansDueToday = customers.filter(c => {
+  const loansDueToday = branchFilteredCustomers.filter(c => {
     if (!c.loanDueDate || !c.loanAmount || c.loanAmount <= 0) return false
     const dueDate = new Date(c.loanDueDate).toISOString().split('T')[0]
     return dueDate === today
@@ -206,6 +260,7 @@ export default function CustomersPage({ currentUser }) {
                 <tr>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Name</th>
                   <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Phone</th>
+                  <th className="px-6 py-3 text-left text-sm font-semibold text-foreground">Created By</th>
                   <th className="px-6 py-3 text-right text-sm font-semibold text-foreground">Loan Amount</th>
                   <th className="px-6 py-3 text-right text-sm font-semibold text-foreground">Loan Due Date</th>
                   <th className="px-6 py-3 text-center text-sm font-semibold text-foreground">Actions</th>
@@ -231,6 +286,20 @@ export default function CustomersPage({ currentUser }) {
                       </div>
                       {customer.address && (
                         <div className="text-xs text-muted-foreground">{customer.address}</div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-sm">
+                      {customer.createdBy ? (
+                        <div>
+                          <div className="font-medium text-foreground flex items-center gap-1">
+                            👤 {customer.createdBy.name}
+                          </div>
+                          <div className="text-xs text-muted-foreground capitalize">
+                            {customer.createdBy.role}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">Unknown</span>
                       )}
                     </td>
                     <td className="px-6 py-4 text-right text-sm">
@@ -798,6 +867,7 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
         amount: paymentAmount,
         total: paymentAmount,
         userId: userId,
+        branchId: currentUser?.branchId || '',
         recordedBy: currentUser?.name || currentUser?.email || 'Unknown',
         paymentMethod: paymentMethod,
         paymentStatus: 'completed'
@@ -817,17 +887,25 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
         notes: `Customer loan payment - ${isFullyPaid ? 'Fully paid' : `Remaining: KES ${newLoanAmount.toLocaleString()}`}`,
         customerId: customer.id,
         createdBy: userId,
+        branchId: currentUser?.branchId || '',
+        userId: userId,
+        userName: currentUser?.name || currentUser?.email,
         type: 'income' // Mark as income to distinguish from expenses
       }
       
       // Update expenses array with the income entry
       const updatedExpenses = [...(userData.expenses || []), incomeEntry]
+      
+      // Also save to shared storage for admin visibility
+      const sharedExpenses = sharedData.expenses || []
+      const updatedSharedExpenses = [...sharedExpenses, incomeEntry]
 
-      // Save to admin-specific storage
+      // Save to admin-specific storage with expense
       await writeSharedData({
         ...sharedData,
         customers: updatedCustomers,
-        transactions: [...updatedTransactions, paymentTransaction]
+        transactions: [...updatedTransactions, paymentTransaction],
+        expenses: updatedSharedExpenses
       }, adminId)
       
       // Save income entry to user-specific storage
@@ -852,7 +930,7 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50 backdrop-blur-sm overflow-y-auto">
-      <div className="bg-card rounded-lg shadow-2xl max-w-2xl w-full p-6 border-2 border-border my-8">
+      <div className="bg-card rounded-lg shadow-2xl max-w-2xl w-full p-6 border-2 border-border my-8 max-h-[90vh] overflow-y-auto">
         <h2 className="text-2xl font-bold text-foreground mb-2">Customer Details</h2>
         <p className="text-sm text-muted-foreground mb-6">{customer.name}</p>
 
@@ -875,6 +953,17 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
           <div className="flex justify-between">
             <span className="text-muted-foreground">Address:</span>
             <span className="font-semibold text-foreground">{customer.address || 'N/A'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Created By:</span>
+            {customer.createdBy ? (
+              <div className="text-right">
+                <div className="font-semibold text-foreground">👤 {customer.createdBy.name}</div>
+                <div className="text-xs text-muted-foreground capitalize">{customer.createdBy.role}</div>
+              </div>
+            ) : (
+              <span className="text-muted-foreground text-sm italic">Unknown</span>
+            )}
           </div>
           
           {/* Credit Limit */}

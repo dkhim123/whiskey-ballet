@@ -12,7 +12,7 @@ const UNKNOWN_USER = {
   role: 'unknown'
 }
 
-export default function AccountabilityModal({ type, onClose, dateRange = 'today', currentUser }) {
+export default function AccountabilityModal({ type, onClose, dateRange = 'today', currentUser, selectedBranch = '' }) {
   const [accountabilityData, setAccountabilityData] = useState([])
   const [loading, setLoading] = useState(true)
   const [totalAmount, setTotalAmount] = useState(0)
@@ -76,7 +76,10 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
             // For cashiers, only show their own transactions
             const matchesUser = currentUser?.role === 'admin' || t.userId === currentUser?.id
             
-            return matchesDate && isCompleted && matchesPaymentMethod && matchesUser
+            // Filter by branch if selectedBranch is provided (for admin filtering)
+            const matchesBranch = !selectedBranch || t.branchId === selectedBranch
+            
+            return matchesDate && isCompleted && matchesPaymentMethod && matchesUser && matchesBranch
           })
           
           // Store filtered transactions for export
@@ -126,7 +129,9 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
             // Filter expenses by date range (exclude income entries like loan repayments)
             const filteredExpenses = expenses.filter(e => {
               const expenseDate = new Date(e.date)
-              return expenseDate >= startDate && e.type !== 'income'
+              const matchesDate = expenseDate >= startDate && e.type !== 'income'
+              const matchesBranch = !selectedBranch || e.branchId === selectedBranch
+              return matchesDate && matchesBranch
             })
             
             // Add to all filtered expenses for export
@@ -172,7 +177,8 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
             const transDate = new Date(t.timestamp)
             const matchesDate = transDate >= startDate
             const isCompleted = t.paymentStatus === 'completed' || !t.paymentStatus
-            return matchesDate && isCompleted
+            const matchesBranch = !selectedBranch || t.branchId === selectedBranch
+            return matchesDate && isCompleted && matchesBranch
           })
           
           filteredTransactions.forEach(t => {

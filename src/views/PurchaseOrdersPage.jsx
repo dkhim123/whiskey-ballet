@@ -98,12 +98,14 @@ export default function PurchaseOrdersPage({ currentUser, onInventoryChange }) {
     const maxId = Math.max(...purchaseOrders.map(po => po.id), 0)
     const poNumber = `PO-${String(maxId + 1).padStart(5, '0')}`
     const userSnapshot = createUserSnapshot(currentUser)
+    const branchId = currentUser?.branchId || ''
     const timestamp = new Date().toISOString()
     
     const poToAdd = {
       ...newPO,
       id: maxId + 1,
       poNumber,
+      branchId,
       orderDate: timestamp,
       status: "draft",
       receivedItems: [],
@@ -241,7 +243,12 @@ export default function PurchaseOrdersPage({ currentUser, onInventoryChange }) {
     }
   }
 
-  const filteredPOs = purchaseOrders.filter(po => 
+  // Filter by branch first, then by status
+  const branchFilteredPOs = currentUser?.role === 'cashier'
+    ? purchaseOrders.filter(po => po.branchId === currentUser.branchId || !po.branchId)
+    : purchaseOrders // Admin sees all
+    
+  const filteredPOs = branchFilteredPOs.filter(po => 
     filterStatus === "all" || po.status === filterStatus
   ).sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate))
 

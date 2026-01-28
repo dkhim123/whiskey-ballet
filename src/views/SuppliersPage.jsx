@@ -53,6 +53,7 @@ export default function SuppliersPage({ currentUser }) {
     const supplierToAdd = {
       ...newSupplier,
       id: maxId + 1,
+      branchId: currentUser?.branchId || '',
       createdDate: new Date().toISOString(),
       totalPurchases: 0,
       outstandingBalance: 0
@@ -77,7 +78,12 @@ export default function SuppliersPage({ currentUser }) {
     }
   }
 
-  const filteredSuppliers = suppliers.filter(supplier =>
+  // Filter by branch first
+  const branchFilteredSuppliers = currentUser?.role === 'cashier'
+    ? suppliers.filter(s => s.branchId === currentUser.branchId || !s.branchId)
+    : suppliers // Admin sees all
+    
+  const filteredSuppliers = branchFilteredSuppliers.filter(supplier =>
     !supplier.deletedAt && ( // Filter out soft-deleted suppliers
       supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       supplier.phone?.toLowerCase().includes(searchTerm.toLowerCase()) ||

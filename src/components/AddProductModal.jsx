@@ -36,7 +36,7 @@ export default function AddProductModal({ onAdd, onClose }) {
     expiryDate: "", // New field for expiry tracking
     alcoholPercentage: "",
     bottleSize: "750ml",
-    kebsNumber: "",
+    kebsNumber: "", // Initialize as empty string
     inventoryUnits: "bottle",
     vatRate: 0.16
   })

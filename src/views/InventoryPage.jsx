@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Package, Table as TableIcon, Plus } from "lucide-react"
+import { Package, Table as TableIcon, Plus, X } from "lucide-react"
 import TopBar from "../components/TopBar"
 import InventoryTable from "../components/InventoryTable"
 import BarcodeModal from "../components/BarcodeModal"
@@ -9,6 +9,7 @@ import EditProductModal from "../components/EditProductModal"
 import AddProductModal from "../components/AddProductModal"
 import StockAdjustmentModal from "../components/StockAdjustmentModal"
 import StockCountModal from "../components/StockCountModal"
+import InventoryCSVUpload from "../components/InventoryCSVUpload"
 import Pagination from "../components/Pagination"
 import BranchSelector from "../components/BranchSelector"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
@@ -30,6 +31,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false)
   const [showStockCountModal, setShowStockCountModal] = useState(false)
+  const [showCSVUpload, setShowCSVUpload] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState(null)
   const [selectedCategory, setSelectedCategory] = useState("All")
   const [selectedExpiryFilter, setSelectedExpiryFilter] = useState("All")
@@ -589,6 +591,20 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
             <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-green-500/0 via-green-500/5 to-green-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
           <button
+            key="csv-upload"
+            onClick={() => setShowCSVUpload(true)}
+            className="group relative px-5 py-3.5 bg-gradient-to-b from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 border border-blue-500/50 rounded-xl font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
+          >
+            <div className="flex items-center gap-2.5">
+              <TableIcon className="w-5 h-5" />
+              <div className="text-left">
+                <div className="text-sm font-bold leading-tight">Import CSV</div>
+                <div className="text-xs opacity-90 font-normal">Bulk upload</div>
+              </div>
+            </div>
+            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+          </button>,
+          <button
             key="add"
             onClick={() => setShowAddModal(true)}
             className="group relative px-5 py-3.5 bg-gradient-to-b from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 border border-blue-500/50 rounded-xl font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
@@ -826,6 +842,32 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
           onSave={handleSaveStockCount}
           onClose={() => setShowStockCountModal(false)}
         />
+      )}
+
+      {/* CSV Upload Modal */}
+      {showCSVUpload && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-background border-2 border-border rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-auto">
+            <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center justify-between">
+              <h2 className="text-xl font-bold">Import Inventory from CSV</h2>
+              <button
+                onClick={() => setShowCSVUpload(false)}
+                className="p-2 hover:bg-muted rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              <InventoryCSVUpload
+                currentUser={currentUser}
+                selectedBranch={selectedBranch}
+                onInventoryUpdate={(updatedInventory) => {
+                  loadInventory() // Reload inventory after CSV upload
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

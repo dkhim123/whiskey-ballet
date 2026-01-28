@@ -724,6 +724,7 @@ export default function ExpensesPage({ currentUser }) {
           onClose={() => setShowAccountabilityModal(false)}
           dateRange={dateRange}
           currentUser={currentUser}
+          selectedBranch={selectedBranch}
         />
       )}
     </div>

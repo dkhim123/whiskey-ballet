@@ -87,7 +87,8 @@ export default function SupplierPaymentsPage({ currentUser }) {
         paymentMethod: newPayment.paymentMethod || 'cash',
         notes: newPayment.notes || `Payment reference: ${newPayment.reference || 'N/A'}`,
         linkedPayment: newPayment.id,
-        linkedSupplier: newPayment.supplierId
+        linkedSupplier: newPayment.supplierId,
+        branchId: currentUser?.branchId || ''
       }
       const updatedExpenses = [...expenses, paymentExpense]
 
@@ -116,6 +117,7 @@ export default function SupplierPaymentsPage({ currentUser }) {
     const paymentToAdd = {
       ...paymentData,
       id: maxId + 1,
+      branchId: currentUser?.branchId || '',
       paymentDate: new Date().toISOString(),
       recordedBy: currentUser?.name || currentUser?.email || "Unknown"
     }
@@ -124,7 +126,12 @@ export default function SupplierPaymentsPage({ currentUser }) {
     setSelectedSupplier(null)
   }
 
-  const filteredPayments = payments
+  // Filter by branch first, then by supplier
+  const branchFilteredPayments = currentUser?.role === 'cashier'
+    ? payments.filter(p => p.branchId === currentUser.branchId || !p.branchId)
+    : payments // Admin sees all
+    
+  const filteredPayments = branchFilteredPayments
     .filter(p => filterSupplier === "all" || p.supplierId === parseInt(filterSupplier))
     .sort((a, b) => new Date(b.paymentDate) - new Date(a.paymentDate))
 

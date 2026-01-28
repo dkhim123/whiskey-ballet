@@ -62,7 +62,7 @@ export default function TransactionDetailsModal({ transaction, onClose, onCancel
     }
   }
 
-  const canCancel = currentUser?.role === 'admin' && transaction.paymentStatus !== 'cancelled'
+  const canCancel = (currentUser?.role === 'admin' || currentUser?.role === 'cashier') && transaction.paymentStatus !== 'cancelled'
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
