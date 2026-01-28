@@ -3,12 +3,15 @@
 import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
 import AccountabilityModal from "../components/AccountabilityModal"
+import BranchSelector from "../components/BranchSelector"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
 import { exportExpensesToCSV } from "../utils/csvExport"
 
 export default function ExpensesPage({ currentUser }) {
   const [expenses, setExpenses] = useState([])
+  const [allExpenses, setAllExpenses] = useState([]) // Store all expenses for admin
+  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
   const [settings, setSettings] = useState({
     spendingLimitPercentage: 50,
     enableSpendingAlerts: true
@@ -29,19 +32,59 @@ export default function ExpensesPage({ currentUser }) {
         const userId = currentUser?.id
         if (!userId) return
 
-        const data = await readData(userId)
-        setExpenses(data.expenses || [])
-        setSettings({
-          spendingLimitPercentage: data.settings?.spendingLimitPercentage || 50,
-          enableSpendingAlerts: data.settings?.enableSpendingAlerts !== false
-        })
+        const adminId = getAdminIdForStorage(currentUser)
+        
+        let allUserExpenses = []
+        
+        if (currentUser.role === 'cashier') {
+          // Cashiers load their own expenses from user-specific storage
+          const data = await readData(userId)
+          allUserExpenses = data.expenses || []
+          setSettings({
+            spendingLimitPercentage: data.settings?.spendingLimitPercentage || 50,
+            enableSpendingAlerts: data.settings?.enableSpendingAlerts !== false
+          })
+        } else if (currentUser.role === 'admin') {
+          // Admin loads expenses from sharedData (aggregated from all users)
+          const sharedData = await readSharedData(adminId)
+          allUserExpenses = sharedData.expenses || []
+          
+          // Load admin's own settings
+          const adminData = await readData(userId)
+          setSettings({
+            spendingLimitPercentage: adminData.settings?.spendingLimitPercentage || 50,
+            enableSpendingAlerts: adminData.settings?.enableSpendingAlerts !== false
+          })
+        }
+        
+        console.log(`💰 ExpensesPage: Loaded ${allUserExpenses.length} total expenses for ${currentUser.role} ${currentUser.name}`)
+        
+        // Store all expenses for admin view
+        setAllExpenses(allUserExpenses)
+        
+        // Filter by branch for cashiers, or by selected branch for admin
+        let filteredByBranch = allUserExpenses
+        if (currentUser.role === 'cashier') {
+          // Cashiers see only their branch expenses
+          const cashierBranch = currentUser.branchId
+          filteredByBranch = allUserExpenses.filter(e => e.branchId === cashierBranch || !e.branchId)
+          console.log(`   🔒 Filtered to ${filteredByBranch.length} expenses for branch ${cashierBranch}`)
+        } else if (currentUser.role === 'admin' && selectedBranch) {
+          // Admin filtering by specific branch
+          filteredByBranch = allUserExpenses.filter(e => e.branchId === selectedBranch)
+          console.log(`   🔍 Admin filtered to ${filteredByBranch.length} expenses for branch ${selectedBranch}`)
+        } else if (currentUser.role === 'admin') {
+          console.log(`   👁️ Admin viewing all ${filteredByBranch.length} expenses from all branches`)
+        }
+        
+        setExpenses(filteredByBranch)
       } catch (error) {
         console.error('Error loading expenses:', error)
       }
     }
 
     loadExpenses()
-  }, [currentUser])
+  }, [currentUser, selectedBranch])
 
   const [metrics, setMetrics] = useState({ income: 0, expenses: 0, cashIncome: 0, mpesaIncome: 0 })
   const [filteredExpenses, setFilteredExpenses] = useState([])
@@ -83,10 +126,22 @@ export default function ExpensesPage({ currentUser }) {
         }
 
         // Calculate income from transactions (only count completed transactions)
-        const filteredTransactions = transactions.filter(t => 
-          new Date(t.timestamp) >= startDate && 
-          (t.paymentStatus === 'completed' || !t.paymentStatus) // Include transactions without status for backward compatibility
-        )
+        // Apply branch filtering to transactions
+        const filteredTransactions = transactions.filter(t => {
+          const matchesDate = new Date(t.timestamp) >= startDate
+          const matchesStatus = t.paymentStatus === 'completed' || !t.paymentStatus
+          
+          // Branch filtering
+          let matchesBranch = true
+          if (currentUser.role === 'cashier') {
+            matchesBranch = t.branchId === currentUser.branchId || !t.branchId
+          } else if (currentUser.role === 'admin' && selectedBranch) {
+            matchesBranch = t.branchId === selectedBranch
+          }
+          
+          return matchesDate && matchesStatus && matchesBranch
+        })
+        
         // Calculate income from sales AND loan repayments
         const salesIncome = filteredTransactions.reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0)
         const salesCashIncome = filteredTransactions
@@ -96,18 +151,28 @@ export default function ExpensesPage({ currentUser }) {
           .filter(t => t.paymentMethod === 'mpesa')
           .reduce((sum, t) => sum + (parseFloat(t.total) || 0), 0)
 
+        // Helper function for expense branch filtering
+        const expenseMatchesBranch = (exp) => {
+          if (currentUser.role === 'cashier') {
+            return exp.branchId === currentUser.branchId || !exp.branchId
+          } else if (currentUser.role === 'admin' && selectedBranch) {
+            return exp.branchId === selectedBranch
+          }
+          return true // Admin with no branch filter sees all
+        }
+
         // Add loan repayments to income (money received from customers, exclude soft-deleted)
         const loanRepayments = expenses
-          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type === 'income')
+          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type === 'income' && expenseMatchesBranch(e))
           .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
         
         // Break down loan repayments by payment method (exclude soft-deleted)
         const loanCashIncome = expenses
-          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type === 'income' && (e.paymentMethod === 'Cash' || e.paymentMethod === 'cash'))
+          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type === 'income' && (e.paymentMethod === 'Cash' || e.paymentMethod === 'cash') && expenseMatchesBranch(e))
           .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
         
         const loanMpesaIncome = expenses
-          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type === 'income' && (e.paymentMethod === 'M-Pesa' || e.paymentMethod === 'mpesa'))
+          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type === 'income' && (e.paymentMethod === 'M-Pesa' || e.paymentMethod === 'mpesa') && expenseMatchesBranch(e))
           .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
         
         const income = salesIncome + loanRepayments
@@ -116,21 +181,36 @@ export default function ExpensesPage({ currentUser }) {
 
         // Calculate expenses (exclude income entries like loan repayments and soft-deleted items)
         const expensesTotal = expenses
-          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type !== 'income')
+          .filter(e => !e.deletedAt && new Date(e.date) >= startDate && e.type !== 'income' && expenseMatchesBranch(e))
           .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
 
+        console.log(`💰 Metrics calculated: Income=${income}, Expenses=${expensesTotal} (Branch: ${selectedBranch || 'All'}, Range: ${dateRange})`)
         setMetrics({ income, expenses: expensesTotal, cashIncome, mpesaIncome })
 
         // Calculate filtered expenses for display
         const filtered = expenses.filter(exp => {
           if (exp.deletedAt) return false
+          
+          // Branch filtering
+          let matchesBranch = true
+          if (currentUser.role === 'cashier') {
+            // Cashiers only see their branch's expenses
+            matchesBranch = exp.branchId === currentUser.branchId || !exp.branchId
+          } else if (currentUser.role === 'admin' && selectedBranch) {
+            // Admin filtering by specific branch
+            matchesBranch = exp.branchId === selectedBranch
+          }
+          // If admin hasn't selected a branch, show all (matchesBranch stays true)
+          
           const expDate = new Date(exp.date)
           const matchesDate = expDate >= startDate
           const matchesSearch = searchTerm === "" || 
             exp.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
             exp.category.toLowerCase().includes(searchTerm.toLowerCase())
-          return matchesDate && matchesSearch
+          return matchesBranch && matchesDate && matchesSearch
         })
+        
+        console.log(`🔍 Filtered expenses: ${filtered.length} (Branch: ${selectedBranch || 'All'}, Search: "${searchTerm}", Range: ${dateRange})`)
         setFilteredExpenses(filtered)
       } catch (error) {
         console.error('Error loading metrics:', error)
@@ -139,7 +219,7 @@ export default function ExpensesPage({ currentUser }) {
       }
     }
     loadMetrics()
-  }, [expenses, dateRange, currentUser, searchTerm])
+  }, [expenses, dateRange, currentUser, searchTerm, selectedBranch])
 
   const totalExpenses = filteredExpenses.reduce((sum, e) => {
     const amount = parseFloat(e.amount) || 0
@@ -157,23 +237,48 @@ export default function ExpensesPage({ currentUser }) {
         return
       }
 
-      const data = await readData(userId)
-      const maxId = Math.max(...(data.expenses || []).map(e => e.id), 0)
+      const adminId = getAdminIdForStorage(currentUser)
+      
+      // Read from appropriate storage
+      let data, currentExpenses
+      if (currentUser.role === 'cashier') {
+        data = await readData(userId)
+        currentExpenses = data.expenses || []
+      } else {
+        data = await readSharedData(adminId)
+        currentExpenses = data.expenses || []
+      }
+      
+      const maxId = Math.max(...currentExpenses.map(e => e.id), 0)
       
       const expenseToAdd = {
         ...newExpense,
         id: maxId + 1,
         createdAt: new Date().toISOString(),
+        branchId: currentUser.branchId, // Track which branch this expense belongs to
+        userId: currentUser.id, // Track who created it
+        userName: currentUser.name, // Track who created it by name
       }
 
-      const updatedExpenses = [...(data.expenses || []), expenseToAdd]
+      const updatedExpenses = [...currentExpenses, expenseToAdd]
       
-      await writeData({
-        ...data,
-        expenses: updatedExpenses
-      }, userId)
+      console.log(`➕ Adding expense: ${expenseToAdd.description} (${expenseToAdd.amount}) to ${currentUser.role === 'admin' ? 'shared' : 'user'} storage`)
+      
+      // Save to appropriate storage
+      if (currentUser.role === 'cashier') {
+        await writeData({
+          ...data,
+          expenses: updatedExpenses
+        }, userId)
+      } else {
+        await writeSharedData({
+          ...data,
+          expenses: updatedExpenses
+        }, adminId)
+      }
 
       setExpenses(updatedExpenses)
+      setAllExpenses(updatedExpenses)
       setShowAddModal(false)
       alert('Expense added successfully!')
     } catch (error) {
@@ -190,17 +295,41 @@ export default function ExpensesPage({ currentUser }) {
         return
       }
 
-      const data = await readData(userId)
-      const updatedExpenses = expenses.map(e => 
+      const adminId = getAdminIdForStorage(currentUser)
+      
+      // Read from appropriate storage
+      let data, currentExpenses
+      if (currentUser.role === 'cashier') {
+        data = await readData(userId)
+        currentExpenses = data.expenses || []
+      } else {
+        data = await readSharedData(adminId)
+        currentExpenses = data.expenses || []
+      }
+      
+      const updatedExpenses = currentExpenses.map(e => 
         e.id === updatedExpense.id ? updatedExpense : e
       )
 
-      await writeData({
-        ...data,
-        expenses: updatedExpenses
-      }, userId)
+      // Save to appropriate storage
+      if (currentUser.role === 'cashier') {
+        await writeData({
+          ...data,
+          expenses: updatedExpenses
+        }, userId)
+      } else {
+        await writeSharedData({
+          ...data,
+          expenses: updatedExpenses
+        }, adminId)
+      }
 
-      setExpenses(updatedExpenses)
+      // Update local state - need to refresh from storage
+      const filteredByBranch = selectedBranch 
+        ? updatedExpenses.filter(e => e.branchId === selectedBranch)
+        : updatedExpenses
+      setExpenses(filteredByBranch)
+      setAllExpenses(updatedExpenses)
       setShowEditModal(false)
       alert('Expense updated successfully!')
     } catch (error) {
@@ -219,20 +348,44 @@ export default function ExpensesPage({ currentUser }) {
         return
       }
 
-      const data = await readData(userId)
+      const adminId = getAdminIdForStorage(currentUser)
+      
+      // Read from appropriate storage
+      let data, currentExpenses
+      if (currentUser.role === 'cashier') {
+        data = await readData(userId)
+        currentExpenses = data.expenses || []
+      } else {
+        data = await readSharedData(adminId)
+        currentExpenses = data.expenses || []
+      }
+      
       // Soft delete: mark as deleted instead of removing
-      const updatedExpenses = expenses.map(e => 
+      const updatedExpenses = currentExpenses.map(e => 
         e.id === expenseId
           ? { ...e, deletedAt: new Date().toISOString(), deletedBy: userId }
           : e
       )
 
-      await writeData({
-        ...data,
-        expenses: updatedExpenses
-      }, userId)
+      // Save to appropriate storage
+      if (currentUser.role === 'cashier') {
+        await writeData({
+          ...data,
+          expenses: updatedExpenses
+        }, userId)
+      } else {
+        await writeSharedData({
+          ...data,
+          expenses: updatedExpenses
+        }, adminId)
+      }
 
-      setExpenses(updatedExpenses)
+      // Update local state
+      const filteredByBranch = selectedBranch 
+        ? updatedExpenses.filter(e => e.branchId === selectedBranch && !e.deletedAt)
+        : updatedExpenses.filter(e => !e.deletedAt)
+      setExpenses(filteredByBranch)
+      setAllExpenses(updatedExpenses)
       alert('Expense deleted successfully!')
     } catch (error) {
       console.error('Error deleting expense:', error)
@@ -307,6 +460,36 @@ export default function ExpensesPage({ currentUser }) {
           </button>,
         ]}
       />
+
+      {/* Branch Filter - Admin Only */}
+      {currentUser?.role === 'admin' && (
+        <div className="px-6 py-4 bg-muted/30 border-b border-border">
+          <BranchSelector
+            currentUser={currentUser}
+            selectedBranch={selectedBranch}
+            onBranchChange={(branchId) => {
+              setSelectedBranch(branchId)
+            }}
+          />
+          <p className="text-sm text-muted-foreground mt-2">
+            ℹ️ Note: Expenses are currently tracked per-user. Multi-branch expense aggregation coming soon.
+          </p>
+        </div>
+      )}
+
+      {/* Cashier Branch Info */}
+      {currentUser?.role === 'cashier' && currentUser.branchId && (
+        <div className="px-6 py-3 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-800">
+          <div className="flex items-center gap-2 text-sm">
+            <svg className="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="text-blue-900 dark:text-blue-300 font-medium">
+              Tracking expenses for your branch
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="p-6 flex-1 overflow-auto">
         {/* Spending Limit Alert */}

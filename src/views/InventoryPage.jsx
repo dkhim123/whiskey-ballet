@@ -10,6 +10,7 @@ import AddProductModal from "../components/AddProductModal"
 import StockAdjustmentModal from "../components/StockAdjustmentModal"
 import StockCountModal from "../components/StockCountModal"
 import Pagination from "../components/Pagination"
+import BranchSelector from "../components/BranchSelector"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
@@ -21,6 +22,8 @@ const STOCK_FILTERS = ["All Stock", "Low Stock", "Out of Stock", "In Stock"]
 
 export default function InventoryPage({ onInventoryChange, currentUser }) {
   const [inventory, setInventory] = useState([])
+  const [allInventory, setAllInventory] = useState([]) // Store all inventory for admin
+  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
   const isSavingRef = useRef(false) // Track if we're currently saving
   const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -54,11 +57,44 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       const inventoryData = sharedData.inventory || []
       console.log(`📦 InventoryPage: Loaded ${inventoryData.length} products for adminId: ${adminId}`)
       
-      setInventory(inventoryData)
+      // Store all inventory for admin
+      setAllInventory(inventoryData)
+      
+      // Filter by branch for cashiers, or by selected branch for admin
+      let filteredInventory = inventoryData
+      if (currentUser.role === 'cashier') {
+        // Cashiers can only see their own branch inventory
+        const cashierBranch = currentUser.branchId
+        if (!cashierBranch) {
+          console.warn(`⚠️ Cashier ${currentUser.name} has NO branchId assigned! Cannot filter inventory.`)
+          filteredInventory = []
+        } else {
+          filteredInventory = inventoryData.filter(item => {
+            // STRICT: Only show items that explicitly match the cashier's branch
+            // Items without branchId are considered unassigned and not shown
+            const matches = item.branchId === cashierBranch
+            if (!item.branchId) {
+              console.log(`⚠️ Item "${item.name}" has NO branchId - excluding from cashier view`)
+            }
+            return matches
+          })
+          console.log(`👤 Cashier ${currentUser.name} viewing ${filteredInventory.length} products from branch ${cashierBranch}`)
+          console.log(`   Total inventory: ${inventoryData.length}, Unassigned: ${inventoryData.filter(i => !i.branchId).length}`)
+        }
+      } else if (currentUser.role === 'admin' && selectedBranch) {
+        // Admin viewing specific branch
+        filteredInventory = inventoryData.filter(item => item.branchId === selectedBranch)
+        console.log(`👨‍💼 Admin viewing ${filteredInventory.length} products from branch ${selectedBranch}`)
+      } else if (currentUser.role === 'admin') {
+        // Admin viewing all branches
+        console.log(`👨‍💼 Admin viewing all ${filteredInventory.length} products across all branches`)
+      }
+      
+      setInventory(filteredInventory)
       
       // Also update parent component if callback provided
       if (onInventoryChange) {
-        onInventoryChange(inventoryData)
+        onInventoryChange(filteredInventory)
       }
     } catch (error) {
       console.error("Error loading inventory:", error)
@@ -80,11 +116,51 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       const adminId = getAdminIdForStorage(currentUser)
       console.log(`💾 InventoryPage: Saving ${updatedInventory.length} products for user ${currentUser.name} (AdminId: ${adminId})`)
       
+      // DEBUG: Log what's in updatedInventory
+      console.log(`🔍 updatedInventory contents:`)
+      updatedInventory.forEach((item, idx) => {
+        console.log(`   ${idx + 1}. ${item.name} - branchId: ${item.branchId}, id: ${item.id}`)
+      })
+      
       // Read shared data INCLUDING deleted items to preserve them
       const sharedData = await readSharedData(adminId, true)
       
-      // Get existing deleted items from storage
-      const existingDeletedItems = (sharedData.inventory || []).filter(item => item.deletedAt != null)
+      // CRITICAL: When saving, merge with all inventory from other branches
+      // Only update items from the branch being edited
+      const allInventoryItems = sharedData.inventory || []
+      
+      // Determine which branch we're editing
+      const editingBranch = currentUser.role === 'cashier' ? currentUser.branchId : selectedBranch
+      
+      // CRITICAL CHECK: If cashier has no branchId, ABORT to prevent data loss
+      if (currentUser.role === 'cashier' && !editingBranch) {
+        console.error(`🚨 CRITICAL: Cashier ${currentUser.name} has NO branchId! Cannot save inventory safely.`)
+        alert(`ERROR: Your account is missing branch assignment. Please logout and login again to fix this issue. Data was NOT saved to prevent loss.`)
+        isSavingRef.current = false
+        return false
+      }
+      
+      console.log(`💾 Saving inventory for ${currentUser.role} "${currentUser.name}" editing branch: "${editingBranch || 'ALL'}"`)
+      
+      // DEBUG: Log what's in the database before filtering
+      console.log(`📚 Database has ${allInventoryItems.length} total items before merge:`)
+      allInventoryItems.forEach((item, idx) => {
+        if (idx < 5) { // Only show first 5
+          console.log(`   ${idx + 1}. ${item.name} - branchId: ${item.branchId}, id: ${item.id}`)
+        }
+      })
+      if (allInventoryItems.length > 5) console.log(`   ... and ${allInventoryItems.length - 5} more`)
+      
+      // Filter out items from the editing branch (we'll replace them)
+      // If admin with no selectedBranch, keep all items from all branches (admin view)
+      const otherBranchItems = editingBranch 
+        ? allInventoryItems.filter(item => item.branchId !== editingBranch)
+        : (currentUser.role === 'admin' ? [] : allInventoryItems) // Admin editing all, cashier shouldn't reach here
+      
+      console.log(`🔀 After filtering, otherBranchItems has ${otherBranchItems.length} items (excluded branch: ${editingBranch}):`)
+      
+      // Get existing deleted items from storage (preserve from all branches)
+      const existingDeletedItems = allInventoryItems.filter(item => item.deletedAt != null)
       
       // Get non-deleted items from updatedInventory
       const nonDeletedItems = updatedInventory.filter(item => !item.deletedAt)
@@ -92,18 +168,32 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       // Get newly deleted items from updatedInventory
       const newlyDeletedItems = updatedInventory.filter(item => item.deletedAt != null)
       
-      // Combine: non-deleted + newly deleted + existing deleted (avoiding duplicates)
+      // Combine: items from other branches + non-deleted from current branch + all deleted items
       const preservedDeletedItems = existingDeletedItems.filter(
         existing => !updatedInventory.some(updated => updated.id === existing.id)
       )
       
       const allItems = [
-        ...nonDeletedItems,
-        ...newlyDeletedItems,
-        ...preservedDeletedItems
+        ...otherBranchItems, // Items from other branches (unchanged)
+        ...nonDeletedItems, // Active items from current branch
+        ...newlyDeletedItems, // Newly deleted items
+        ...preservedDeletedItems // Previously deleted items
       ]
       
-      console.log(`📦 InventoryPage: Saving ${allItems.length} total items (${nonDeletedItems.length} active, ${newlyDeletedItems.length} newly deleted, ${preservedDeletedItems.length} previously deleted)`)
+      console.log(`� SAVE BREAKDOWN:`)
+      console.log(`   - Other branches: ${otherBranchItems.length} items`)
+      console.log(`   - Current branch (${editingBranch || 'ALL'}): ${nonDeletedItems.length} active items`)
+      console.log(`   - Newly deleted: ${newlyDeletedItems.length} items`)
+      console.log(`   - Previously deleted: ${preservedDeletedItems.length} items`)
+      console.log(`   - TOTAL: ${allItems.length} items`)
+      
+      // Log branch distribution for verification
+      const branchCounts = {}
+      allItems.forEach(item => {
+        const branch = item.branchId || 'UNASSIGNED'
+        branchCounts[branch] = (branchCounts[branch] || 0) + 1
+      })
+      console.log(`   - By branch:`, branchCounts)
       
       await writeSharedData({
         ...sharedData,
@@ -113,6 +203,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       console.log(`✅ InventoryPage: Successfully saved inventory to adminId: ${adminId}`)
       
       // Update local state immediately BEFORE clearing the lock
+      // Store complete inventory for admin
+      setAllInventory(allItems)
+      // Update filtered view
       setInventory(updatedInventory)
       
       // Also update parent component if callback provided
@@ -139,7 +232,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     // Refresh every 5 seconds for real-time sync
     const interval = setInterval(loadInventory, 5000)
     return () => clearInterval(interval)
-  }, [currentUser?.id]) // Use currentUser.id to avoid re-running on every render
+  }, [currentUser?.id, selectedBranch]) // Re-load when branch changes
 
   // Debounce search for better performance
   const debouncedSearch = useDebounce(searchTerm, 300)
@@ -300,7 +393,14 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   }
 
   const handleSaveProduct = async (updatedProduct) => {
-    const updatedInventory = inventory.map((item) => (item.id === updatedProduct.id ? updatedProduct : item))
+    // Preserve branchId from original product when updating
+    const originalProduct = inventory.find(item => item.id === updatedProduct.id)
+    const productToSave = {
+      ...updatedProduct,
+      branchId: originalProduct?.branchId || currentUser?.branchId // Preserve or set branchId
+    }
+    
+    const updatedInventory = inventory.map((item) => (item.id === productToSave.id ? productToSave : item))
     const saved = await saveInventory(updatedInventory)
     
     if (saved) {
@@ -371,14 +471,18 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   }
 
   const handleAddProduct = async (newProduct) => {
-    const maxId = Math.max(...inventory.map((p) => p.id), 0)
+    // CRITICAL: Use allInventory (all branches) to calculate max ID to prevent duplicate IDs across branches
+    const inventoryToCheck = currentUser?.role === 'admin' ? allInventory : allInventory
+    const maxId = Math.max(...inventoryToCheck.map((p) => p.id), 0)
     const productToAdd = {
       ...newProduct,
       id: maxId + 1,
       barcode: `12345678900${maxId + 1}`,
+      branchId: currentUser?.branchId, // Associate product with current branch
     }
     
-    console.log(`➕ InventoryPage: Adding new product: ${newProduct.name}`)
+    console.log(`➕ InventoryPage: Adding new product: ${newProduct.name} to branch ${currentUser?.branchId}, ID: ${productToAdd.id}`)
+    console.log(`   Max ID from ${inventoryToCheck.length} total products: ${maxId}`)
     const saved = await saveInventory([...inventory, productToAdd])
     
     if (saved) {
@@ -500,6 +604,52 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
           </button>,
         ]}
       />
+
+      {/* Branch Filter - Admin Only */}
+      {currentUser?.role === 'admin' && (
+        <div className="px-6 py-4 bg-muted/30 border-b border-border">
+          <BranchSelector
+            currentUser={currentUser}
+            selectedBranch={selectedBranch}
+            onBranchChange={(branchId) => {
+              setSelectedBranch(branchId)
+              setCurrentPage(1) // Reset pagination
+            }}
+          />
+        </div>
+      )}
+
+      {/* Cashier WITHOUT Branch - Critical Error */}
+      {currentUser?.role === 'cashier' && !currentUser.branchId && (
+        <div className="px-6 py-4 bg-red-50 dark:bg-red-950/30 border-b-2 border-red-500">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-red-500 flex items-center justify-center shrink-0">
+              <span className="text-white text-xl font-bold">!</span>
+            </div>
+            <div className="flex-1">
+              <p className="font-bold text-red-900 dark:text-red-200">
+                ⚠️ Account Error: No Branch Assigned
+              </p>
+              <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                You cannot add or view inventory without a branch assignment. 
+                <strong className="block mt-1">Action Required: Logout and login again to fix this.</strong>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cashier Branch Info */}
+      {currentUser?.role === 'cashier' && currentUser.branchId && (
+        <div className="px-6 py-3 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-800">
+          <div className="flex items-center gap-2 text-sm">
+            <Package className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+            <span className="text-blue-900 dark:text-blue-300 font-medium">
+              Viewing inventory for your branch
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="p-6 flex-1 overflow-auto">
         {/* Alert Cards - Compact and Clickable */}
@@ -630,6 +780,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
           onEdit={handleEditClick} 
           onBarcode={handleBarcodeClick}
           onAdjust={handleAdjustmentClick}
+          branchId={currentUser?.branchId}
         />
 
         {/* Pagination */}

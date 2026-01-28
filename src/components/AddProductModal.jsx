@@ -59,7 +59,7 @@ export default function AddProductModal({ onAdd, onClose }) {
     
     const newData = {
       ...formData,
-      [name]: numericFields.includes(name) ? (Number.parseFloat(value) || 0) : (value || ""),
+      [name]: numericFields.includes(name) ? (Number.parseFloat(value) || 0) : value,
     }
     
     // Update price for backward compatibility (use selling price as main price)
@@ -414,7 +414,7 @@ export default function AddProductModal({ onAdd, onClose }) {
                 <input
                   type="number"
                   name="alcoholPercentage"
-                  value={formData.alcoholPercentage}
+                  value={formData.alcoholPercentage || ""}
                   onChange={handleChange}
                   className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D4AF37] focus:border-[#D4AF37] bg-card text-foreground"
                   min="0"

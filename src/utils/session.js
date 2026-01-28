@@ -5,7 +5,7 @@
 const SESSION_KEY = 'pos-user-session'
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000 // 24 hours
 const VALID_ROLES = ['admin', 'manager', 'cashier']
-const VALID_PAGES = ['admin-dashboard', 'manager-dashboard', 'pos', 'inventory', 'cashier-dashboard', 'reports', 'data-management', 'admin-settings', 'user-guide', 'customers', 'suppliers', 'purchase-orders', 'supplier-payments', 'expenses', 'database-settings', 'transactions-history']
+const VALID_PAGES = ['admin-dashboard', 'manager-dashboard', 'pos', 'inventory', 'cashier-dashboard', 'reports', 'data-management', 'admin-settings', 'branch-management', 'user-guide', 'customers', 'suppliers', 'purchase-orders', 'supplier-payments', 'expenses', 'database-settings', 'transactions-history']
 
 /**
  * Validate session data structure and values

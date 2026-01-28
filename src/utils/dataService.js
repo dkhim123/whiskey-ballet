@@ -63,104 +63,122 @@ class DataService {
     )
   }
 
-  // Transactions
-  async getTransactions() {
+  // Transactions (branch-aware)
+  async getTransactions(branchId) {
     await this.init()
-    return db.getAll(STORES.TRANSACTIONS)
+    const all = await db.getAll(STORES.TRANSACTIONS)
+    return branchId ? all.filter(t => t.branchId === branchId) : all
   }
 
-  async getTransaction(id) {
+  async getTransaction(id, branchId) {
     await this.init()
-    return db.get(STORES.TRANSACTIONS, id)
+    const txn = await db.get(STORES.TRANSACTIONS, id)
+    return branchId ? (txn && txn.branchId === branchId ? txn : null) : txn
   }
 
-  async addTransaction(transaction) {
+  async addTransaction(transaction, branchId) {
     await this.init()
-    return db.add(STORES.TRANSACTIONS, transaction)
+    const finalBranchId = branchId || transaction.branchId
+    if (!finalBranchId) throw new Error('branchId is required for all transactions')
+    const txn = { ...transaction, branchId: finalBranchId }
+    return db.add(STORES.TRANSACTIONS, txn)
   }
 
-  async getTransactionsByUser(userId) {
+  async getTransactionsByUser(userId, branchId) {
     await this.init()
-    return db.queryByIndex(STORES.TRANSACTIONS, "userId", userId)
+    const txns = await db.queryByIndex(STORES.TRANSACTIONS, "userId", userId)
+    return branchId ? txns.filter(t => t.branchId === branchId) : txns
   }
 
-  async getTransactionsByDateRange(startDate, endDate) {
+  async getTransactionsByDateRange(startDate, endDate, branchId) {
     await this.init()
-    const transactions = await this.getTransactions()
-
+    const transactions = await this.getTransactions(branchId)
     return transactions.filter((t) => {
       const date = new Date(t.date)
       return date >= new Date(startDate) && date <= new Date(endDate)
     })
   }
 
-  // Users
-  async getUsers() {
+  // Users (branch-aware)
+  async getUsers(branchId) {
     await this.init()
-    return db.getAll(STORES.USERS)
+    const all = await db.getAll(STORES.USERS)
+    return branchId ? all.filter(u => u.branchId === branchId) : all
   }
 
-  async getUser(id) {
+  async getUser(id, branchId) {
     await this.init()
-    return db.get(STORES.USERS, id)
+    const user = await db.get(STORES.USERS, id)
+    return branchId ? (user && user.branchId === branchId ? user : null) : user
   }
 
-  async getUserByEmail(email) {
+  async getUserByEmail(email, branchId) {
     await this.init()
     const users = await db.queryByIndex(STORES.USERS, "email", email)
-    return users[0] || null
+    return branchId ? users.find(u => u.branchId === branchId) || null : users[0] || null
   }
 
-  async addUser(user) {
+  async addUser(user, branchId) {
     await this.init()
-    return db.add(STORES.USERS, user)
+    const finalBranchId = branchId || user.branchId
+    if (!finalBranchId) throw new Error('branchId is required for all users')
+    const u = { ...user, branchId: finalBranchId }
+    return db.add(STORES.USERS, u)
   }
 
-  async updateUser(user) {
+  async updateUser(user, branchId) {
     await this.init()
-    return db.update(STORES.USERS, user)
+    const finalBranchId = branchId || user.branchId
+    if (!finalBranchId) throw new Error('branchId is required for all users')
+    const u = { ...user, branchId: finalBranchId }
+    return db.update(STORES.USERS, u)
   }
 
-  async deleteUser(id) {
+  async deleteUser(id, branchId) {
     await this.init()
+    const user = await db.get(STORES.USERS, id)
+    if (branchId && user && user.branchId !== branchId) return false
     return db.delete(STORES.USERS, id)
   }
 
-  // Inventory
-  async getInventory() {
+  // Inventory (branch-aware)
+  async getInventory(branchId) {
     await this.init()
-    return db.getAll(STORES.INVENTORY)
+    const all = await db.getAll(STORES.INVENTORY)
+    return branchId ? all.filter(i => i.branchId === branchId) : all
   }
 
-  async getInventoryItem(productId) {
+  async getInventoryItem(productId, branchId) {
     await this.init()
-    return db.get(STORES.INVENTORY, productId)
+    const item = await db.get(STORES.INVENTORY, productId)
+    return branchId ? (item && item.branchId === branchId ? item : null) : item
   }
 
-  async updateInventory(productId, quantity) {
+  async updateInventory(productId, quantity, branchId) {
     await this.init()
-    const item = await this.getInventoryItem(productId)
-
+    if (!branchId) throw new Error('branchId is required for all inventory updates')
+    const item = await this.getInventoryItem(productId, branchId)
     if (item) {
       return db.update(STORES.INVENTORY, {
         ...item,
         quantity,
+        branchId
       })
     } else {
       return db.add(STORES.INVENTORY, {
         productId,
         quantity,
+        branchId
       })
     }
   }
 
-  async adjustInventory(productId, adjustment) {
+  async adjustInventory(productId, adjustment, branchId) {
     await this.init()
-    const item = await this.getInventoryItem(productId)
+    const item = await this.getInventoryItem(productId, branchId)
     const currentQty = item?.quantity || 0
     const newQty = Math.max(0, currentQty + adjustment)
-
-    return this.updateInventory(productId, newQty)
+    return this.updateInventory(productId, newQty, branchId)
   }
 
   // Sync status

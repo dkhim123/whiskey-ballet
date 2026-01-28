@@ -16,12 +16,14 @@ import CustomersPage from "./views/CustomersPage"
 import ExpensesPage from "./views/ExpensesPage"
 import UserGuidePage from "./views/UserGuidePage"
 import AdminSettingsPage from "./views/AdminSettingsPage"
+import BranchManagementPage from "./views/BranchManagementPage"
 import TransactionsHistoryPage from "./views/TransactionsHistoryPage"
 import Sidebar from "./components/Sidebar"
 import ScrollArea from "./components/ScrollArea"
 import PWAInstallPrompt from "./components/PWAInstallPrompt"
 import PWAUpdatePrompt from "./components/PWAUpdatePrompt"
 import ServiceWorkerRegistration from "./components/ServiceWorkerRegistration"
+import AccountHealthCheck from "./components/AccountHealthCheck"
 import { ThemeProvider } from "./components/ThemeProvider"
 import { readData, writeData, getStorageMode, readSharedData, writeSharedData, migrateTransactionsPaymentStatus } from "./utils/storage"
 import { saveSession, loadSession, updateSessionPage, clearSession } from "./utils/session"
@@ -45,23 +47,23 @@ export default function App() {
       try {
         const mode = getStorageMode()
         setStorageMode(mode)
-        
-        // Initialize branch service for offline queue and sync
-        initializeBranchService()
-        
-        // Initialize default users (admin and cashier) if none exist - do in background
-        initializeDefaultUsers().catch(err => console.error("User init error:", err))
-        
-        // Restore user session with validation
-        const session = loadSession()
+        const session = loadSession();
         if (session) {
+          console.log('📂 Restoring session:', { 
+            role: session.userRole, 
+            page: session.currentPage, 
+            userName: session.user?.name 
+          })
           setUserRole(session.userRole)
-          setCurrentPage(session.currentPage)
+          // Force admin dashboard if user is admin
+          if (session.userRole === 'admin') {
+            setCurrentPage('admin-dashboard')
+          } else {
+            setCurrentPage(session.currentPage)
+          }
           setCurrentUser(session.user)
-          
           // Get admin ID for storage (for cashiers/managers, uses their creator's ID)
           const adminId = getAdminIdForStorage(session.user)
-          
           // Load admin-specific inventory (isolated per admin)
           readSharedData(adminId).then(data => {
             if (data && data.inventory && data.inventory.length > 0) {
@@ -216,6 +218,7 @@ export default function App() {
   return (
     <ThemeProvider>
       <div className="flex h-screen bg-background">
+        <AccountHealthCheck currentUser={currentUser} onLogout={handleLogout} />
         <Sidebar 
           currentPage={currentPage} 
           onPageChange={(page) => {
@@ -243,6 +246,7 @@ export default function App() {
           {currentPage === "user-guide" && <UserGuidePage />}
           {currentPage === "data-management" && <DataManagementPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "admin-settings" && <AdminSettingsPage currentUser={currentUser} inventory={inventory} />}
+          {currentPage === "branch-management" && <BranchManagementPage currentUser={currentUser} />}
           {currentPage === "suppliers" && <SuppliersPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "purchase-orders" && <PurchaseOrdersPage key={currentUser?.id} currentUser={currentUser} onInventoryChange={setInventory} />}
           {currentPage === "supplier-payments" && <SupplierPaymentsPage key={currentUser?.id} currentUser={currentUser} />}

@@ -9,9 +9,12 @@ import { getImageSrc } from "../utils/images"
 // 250ms provides smooth UX while reducing unnecessary re-renders
 const RESIZE_DEBOUNCE_DELAY = 250
 
-export default function InventoryTable({ items, onEdit, onBarcode, onAdjust }) {
+export default function InventoryTable({ items, onEdit, onBarcode, onAdjust, branchId }) {
   const [isMobile, setIsMobile] = useState(false)
   const timeoutIdRef = useRef(null)
+
+  // Filter items by branchId if provided
+  const filteredItems = branchId ? (Array.isArray(items) ? items.filter(i => i.branchId === branchId) : []) : (Array.isArray(items) ? items : [])
 
   useEffect(() => {
     // Only run in browser environment
@@ -63,7 +66,7 @@ export default function InventoryTable({ items, onEdit, onBarcode, onAdjust }) {
   if (isMobile) {
     return (
       <div className="space-y-3">
-        {items.map((item) => {
+        {filteredItems.map((item) => {
           const costPrice = item.costPrice || 0
           const sellingPrice = item.sellingPrice || item.price || 0
           const margin = costPrice > 0 ? ((sellingPrice - costPrice) / costPrice * 100) : 0
@@ -167,7 +170,7 @@ export default function InventoryTable({ items, onEdit, onBarcode, onAdjust }) {
           </tr>
         </thead>
         <tbody>
-          {items.map((item, idx) => {
+          {filteredItems.map((item, idx) => {
             const costPrice = item.costPrice || 0
             const sellingPrice = item.sellingPrice || item.price || 0
             const margin = costPrice > 0 ? ((sellingPrice - costPrice) / costPrice * 100) : 0

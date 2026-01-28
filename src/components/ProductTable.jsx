@@ -3,7 +3,7 @@
 import { getImageSrc } from "../utils/images"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
 
-export default function ProductTable({ products, onAddProduct, cart = [], selectedCustomer = null }) {
+export default function ProductTable({ products, onAddProduct, cart = [], selectedCustomer = null, branchId }) {
   // Calculate available quantity for each product (total - what's in cart)
   const getAvailableQuantity = (product) => {
     const cartItem = cart.find(item => item.id === product.id)
@@ -60,7 +60,10 @@ export default function ProductTable({ products, onAddProduct, cart = [], select
     }
   }
 
-  if (products.length === 0) {
+  // Filter products by branchId if provided
+  const filteredProducts = branchId ? products.filter(p => p.branchId === branchId) : products
+
+  if (filteredProducts.length === 0) {
     return (
       <div className="text-center py-12 bg-card rounded-xl" style={{ boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05)' }}>
         <p className="text-muted-foreground text-lg">No products found</p>
@@ -84,7 +87,7 @@ export default function ProductTable({ products, onAddProduct, cart = [], select
             </tr>
           </thead>
           <tbody>
-            {products.map((product, idx) => {
+            {filteredProducts.map((product, idx) => {
               const availableQty = getAvailableQuantity(product)
               const isOutOfStock = availableQty <= 0
               const expired = isExpired(product.expiryDate)

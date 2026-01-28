@@ -38,3 +38,45 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase
+.firebase/
+.firebaserc
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# Test and migration scripts
+*_SCRIPT.js
+*_FIX*.js
+CHECK_*.js
+DELETE_*.js
+DIAGNOSTIC_*.js
+VERIFY_*.js
+test-*.js
+test-*.html
+check*.js
+*.test.txt
+
+# Documentation (keep only README.md)
+README.old.md
+*_GUIDE.md
+*_STATUS.md
+*_FIXES.md
+*_CHECKLIST.md
+*_SUMMARY.md
+*_RESULTS.md
+*_DEPLOYMENT.md
+*_TROUBLESHOOTING.md
+QUICK_START.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -33,8 +33,25 @@ export default function CashierDashboard({ currentUser }) {
         const sharedData = await readSharedData(adminId)
         const allTransactions = sharedData.transactions || []
         
-        // Filter transactions created by THIS cashier only
-        const transactions = allTransactions.filter(t => t.userId === userId)
+        // Filter transactions created by THIS cashier only, and by branch
+        const branchId = currentUser?.branchId
+        if (!branchId) {
+          console.warn(`⚠️ Cashier ${currentUser?.name} has NO branchId assigned!`)
+        }
+        
+        const transactions = allTransactions.filter(t => {
+          const matchesUser = t.userId === userId
+          const matchesBranch = branchId ? t.branchId === branchId : true
+          
+          // Log unassigned transactions
+          if (matchesUser && !t.branchId) {
+            console.log(`⚠️ Transaction ${t.id} by cashier has NO branchId`)
+          }
+          
+          return matchesUser && matchesBranch
+        })
+        
+        console.log(`👤 Cashier Dashboard: ${transactions.length} transactions (User: ${userId}, Branch: ${branchId || 'NONE'})`)
         
         // Get today's date at midnight
         const today = new Date()

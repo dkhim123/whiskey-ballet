@@ -2,8 +2,13 @@
 
 import { getImageSrc } from "../utils/images"
 
-export default function ProductGrid({ products, onAddProduct, cart = [] }) {
-  if (products.length === 0) {
+export default function ProductGrid({ products, onAddProduct, cart = [], branchId }) {
+  // Defensive: ensure products is always an array
+  const safeProducts = Array.isArray(products) ? products : []
+  // Filter products by branchId if provided
+  const filteredProducts = branchId ? safeProducts.filter(p => p.branchId === branchId) : safeProducts
+
+  if (filteredProducts.length === 0) {
     return (
       <div className="text-center py-12 bg-card rounded-xl" style={{ boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05)' }}>
         <p className="text-muted-foreground text-lg">No products found</p>

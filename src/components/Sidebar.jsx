@@ -115,6 +115,7 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
   const adminMenuItems = userRole === "admin" 
     ? [
         { id: "admin-settings", label: "Admin Settings", icon: SettingsIcon },
+        { id: "branch-management", label: "Branches", icon: SettingsIcon },
         { id: "data-management", label: "Backup & Restore", icon: SettingsIcon },
         ...commonSettingsItems
       ]

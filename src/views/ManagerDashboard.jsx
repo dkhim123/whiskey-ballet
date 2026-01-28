@@ -3,10 +3,14 @@
 import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
 import DashboardCard from "../components/DashboardCard"
+import BranchSelector from "../components/BranchSelector"
 import { readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
 
 export default function ManagerDashboard({ currentUser }) {
+  const [selectedBranch, setSelectedBranch] = useState(currentUser?.branchId || '')
+  const [selectedCashier, setSelectedCashier] = useState('')
+  const [cashiers, setCashiers] = useState([])
   const [inventory, setInventory] = useState([])
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -19,16 +23,39 @@ export default function ManagerDashboard({ currentUser }) {
 
   useEffect(() => {
     loadData()
-  }, [])
+  }, [selectedBranch, selectedCashier])
 
   const loadData = async () => {
     try {
       const adminId = getAdminIdForStorage(currentUser)
       const data = await readSharedData(adminId)
       if (data) {
-        setInventory(data.inventory || [])
-        setTransactions(data.transactions || [])
-        calculateSalesAnalytics(data.inventory || [], data.transactions || [])
+        // Load users/cashiers
+        const users = data.users || []
+        
+        // Filter by branchId if selected
+        const filteredInventory = selectedBranch ? (data.inventory || []).filter(i => i.branchId === selectedBranch) : (data.inventory || [])
+        let filteredTransactions = selectedBranch ? (data.transactions || []).filter(t => t.branchId === selectedBranch) : (data.transactions || [])
+        
+        // Filter cashiers by selected branch
+        const branchCashiers = selectedBranch 
+          ? users.filter(u => u.role === 'cashier' && u.branchId === selectedBranch)
+          : users.filter(u => u.role === 'cashier')
+        setCashiers(branchCashiers)
+        
+        // Reset selected cashier if it's not in the filtered list
+        if (selectedCashier && !branchCashiers.some(c => c.id === selectedCashier)) {
+          setSelectedCashier('')
+        }
+        
+        // Filter by cashier if selected
+        if (selectedCashier) {
+          filteredTransactions = filteredTransactions.filter(t => t.userId === selectedCashier)
+        }
+        
+        setInventory(filteredInventory)
+        setTransactions(filteredTransactions)
+        calculateSalesAnalytics(filteredInventory, filteredTransactions)
       }
       setLoading(false)
     } catch (error) {
@@ -113,7 +140,42 @@ export default function ManagerDashboard({ currentUser }) {
   return (
     <div className="flex flex-col h-screen bg-background">
       <TopBar title="Manager Dashboard" />
-      
+      {/* Branch and Cashier Filters - Manager/Admin Only */}
+      {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+        <div className="px-3 sm:px-6 py-4 bg-muted/30 border-b border-border">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <div className="flex-1">
+              <BranchSelector
+                currentUser={currentUser}
+                selectedBranch={selectedBranch}
+                onBranchChange={(branchId) => {
+                  setSelectedBranch(branchId)
+                  setSelectedCashier('') // Reset cashier when branch changes
+                }}
+              />
+            </div>
+            {selectedBranch && cashiers.length > 0 && (
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-muted-foreground mb-2">
+                  Filter by Cashier
+                </label>
+                <select
+                  value={selectedCashier}
+                  onChange={(e) => setSelectedCashier(e.target.value)}
+                  className="w-full px-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-foreground"
+                >
+                  <option value="">All Cashiers ({cashiers.length})</option>
+                  {cashiers.map(cashier => (
+                    <option key={cashier.id} value={cashier.id}>
+                      {cashier.name} - {cashier.phone}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div className="flex-1 p-4 md:p-8">
         <div className="max-w-7xl mx-auto space-y-6">
           {/* Welcome Section */}

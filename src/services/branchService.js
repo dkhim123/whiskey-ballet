@@ -66,7 +66,11 @@ async function saveBranchToIndexedDB(branch) {
  * Save branch to Firebase Firestore
  */
 async function saveBranchToFirebase(branch) {
-  if (!isFirebaseConfigured()) {
+  // Temporarily disable Firebase to avoid errors
+  return false;
+  
+  /* Firebase sync disabled - uncomment when ready
+  if (!isFirebaseConfigured() || !db) {
     console.warn('Firebase not configured, skipping cloud sync');
     return false;
   }
@@ -88,6 +92,7 @@ async function saveBranchToFirebase(branch) {
     offlineQueue.push({ action: 'save', data: branch });
     return false;
   }
+  */
 }
 
 /**
@@ -112,7 +117,8 @@ export async function createBranch(branchData) {
   // Save to all storage layers
   saveBranchLocally(branch);
   await saveBranchToIndexedDB(branch);
-  await saveBranchToFirebase(branch);
+  // Firebase temporarily disabled
+  // await saveBranchToFirebase(branch);
 
   console.log('✅ Branch created:', branch.name);
   return branch;
@@ -126,32 +132,21 @@ export async function getAllBranches() {
   const adminId = getCurrentAdminId();
   
   try {
-    // Try Firebase first (most up-to-date)
-    if (isFirebaseConfigured()) {
-      try {
-        const branchesRef = collection(db, 'organizations', adminId, COLLECTION_NAME);
-        const snapshot = await getDocs(branchesRef);
-        
-        const branches = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-
-        // Update local cache
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(branches));
-        
-        console.log(`📦 Loaded ${branches.length} branches from Firebase`);
-        return branches.filter(b => b.isActive);
-      } catch (firebaseError) {
-        console.warn('Firebase unavailable, falling back to local storage:', firebaseError.message);
-      }
-    }
-
-    // Fallback to IndexedDB
+    // Firebase temporarily disabled - using IndexedDB only
+    
+    // Load from IndexedDB
     const indexedDb = await getDB();
     const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
     const store = tx.objectStore(STORES.BRANCHES);
-    const allBranches = await store.getAll();
+    
+    // Need to wait for the request to complete
+    const getAllRequest = store.getAll();
+    const allBranches = await new Promise((resolve, reject) => {
+      getAllRequest.onsuccess = () => resolve(getAllRequest.result || []);
+      getAllRequest.onerror = () => reject(getAllRequest.error);
+    });
+    
+    console.log('📦 Raw IndexedDB data:', allBranches);
     
     const userBranches = allBranches.filter(b => b.adminId === adminId && b.isActive);
     
@@ -177,7 +172,7 @@ export async function getBranch(branchId) {
   
   try {
     // Try Firebase first
-    if (isFirebaseConfigured()) {
+    if (isFirebaseConfigured() && db) {
       try {
         const branchRef = doc(db, 'organizations', adminId, COLLECTION_NAME, branchId);
         const snapshot = await getDoc(branchRef);
@@ -252,15 +247,29 @@ export async function deleteBranch(branchId) {
  */
 export async function getBranchCashiers(branchId) {
   try {
-    const indexedDb = await getDB();
-    const tx = indexedDb.transaction(STORES.USERS, 'readonly');
-    const store = tx.objectStore(STORES.USERS);
-    const allUsers = await store.getAll();
+    console.log('🔍 getBranchCashiers called with branchId:', branchId, typeof branchId);
     
-    const branchCashiers = allUsers.filter(user => 
-      user.branchId === branchId && user.role === 'cashier'
-    );
+    // Read users from localStorage (same key as auth.js)
+    const USERS_STORAGE_KEY = 'pos-users-db';
+    const stored = localStorage.getItem(USERS_STORAGE_KEY);
+    const allUsers = stored ? JSON.parse(stored) : [];
     
+    console.log('👥 All users from localStorage:', allUsers.map(u => ({
+      name: u.name,
+      role: u.role,
+      branchId: u.branchId,
+      branchIdType: typeof u.branchId
+    })));
+    
+    const branchCashiers = allUsers.filter(user => {
+      const matches = user.branchId === branchId && user.role === 'cashier';
+      if (user.role === 'cashier') {
+        console.log(`Cashier ${user.name}: branchId="${user.branchId}" vs searching="${branchId}" - Match: ${matches}`);
+      }
+      return matches;
+    });
+    
+    console.log('✅ Found', branchCashiers.length, 'cashiers for branch', branchId);
     return branchCashiers;
   } catch (error) {
     console.error('Error getting branch cashiers:', error);
@@ -331,10 +340,11 @@ export function initializeBranchService() {
       offlineQueue = JSON.parse(savedQueue);
       localStorage.removeItem('branch-offline-queue');
       
+      // Firebase temporarily disabled
       // Process queue when online
-      if (navigator.onLine && isFirebaseConfigured()) {
-        processOfflineQueue();
-      }
+      // if (navigator.onLine && isFirebaseConfigured() && db) {
+      //   processOfflineQueue();
+      // }
     }
   } catch (error) {
     console.error('Error loading offline queue:', error);
@@ -347,10 +357,11 @@ export function initializeBranchService() {
     }
   });
 
+  // Firebase temporarily disabled
   // Process queue when connection is restored
-  window.addEventListener('online', () => {
-    if (isFirebaseConfigured()) {
-      processOfflineQueue();
-    }
-  });
+  // window.addEventListener('online', () => {
+  //   if (isFirebaseConfigured() && db) {
+  //     processOfflineQueue();
+  //   }
+  // });
 }

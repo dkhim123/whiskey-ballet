@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
 import ReportsChart from "../components/ReportsChart"
 import ReportsFilters from "../components/ReportsFilters"
+import BranchSelector from "../components/BranchSelector"
 import { readData, readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
 import { convertToCSV, downloadCSV } from "../utils/csvExport"
@@ -24,6 +25,7 @@ export default function ReportsPage({ currentUser }) {
   const [dateRange, setDateRange] = useState('today')
   const [paymentMethod, setPaymentMethod] = useState('all')
   const [productSortBy, setProductSortBy] = useState('revenue') // 'revenue' or 'quantity'
+  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
 
   useEffect(() => {
     const loadReportData = async () => {
@@ -63,13 +65,24 @@ export default function ReportsPage({ currentUser }) {
           // Only include completed transactions or transactions without status (backward compatibility)
           const dateMatch = transDate >= startDate && (t.paymentStatus === 'completed' || !t.paymentStatus)
           
-          // Apply payment method filter
-          if (paymentMethod !== 'all') {
-            return dateMatch && t.paymentMethod === paymentMethod
+          // Apply branch filter for cashiers or when admin selects a branch
+          let branchMatch = true
+          if (currentUser.role === 'cashier') {
+            branchMatch = t.branchId === currentUser.branchId
+          } else if (currentUser.role === 'admin' && selectedBranch) {
+            branchMatch = t.branchId === selectedBranch
           }
           
-          return dateMatch
+          // Apply payment method filter
+          let paymentMatch = true
+          if (paymentMethod !== 'all') {
+            paymentMatch = t.paymentMethod === paymentMethod
+          }
+          
+          return dateMatch && branchMatch && paymentMatch
         })
+        
+        console.log(`📊 ReportsPage: Filtered ${filteredTransactions.length} transactions (Date: ${dateRange}, Branch: ${selectedBranch || 'ALL'}, Payment: ${paymentMethod})`)
         
         // Calculate sales summary
         const totalSales = filteredTransactions.reduce((sum, t) => sum + (t.total ?? 0), 0)
@@ -157,7 +170,7 @@ export default function ReportsPage({ currentUser }) {
     }
     
     loadReportData()
-  }, [dateRange, paymentMethod, currentUser])
+  }, [dateRange, paymentMethod, currentUser, selectedBranch, productSortBy])
 
   // Export functions for reports
   const exportSalesReport = () => {
@@ -221,8 +234,15 @@ export default function ReportsPage({ currentUser }) {
 
       <div className="p-6 flex-1 overflow-auto">
         <div className="mb-6 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
-          <div className="flex-1 w-full md:w-auto">
+          <div className="flex-1 w-full md:w-auto flex gap-4">
             <ReportsFilters onDateRangeChange={setDateRange} onPaymentMethodChange={setPaymentMethod} />
+            {currentUser?.role === 'admin' && (
+              <BranchSelector
+                selectedBranch={selectedBranch}
+                onBranchChange={setSelectedBranch}
+                currentUser={currentUser}
+              />
+            )}
           </div>
           <div className="flex gap-2 flex-wrap">
             <button
