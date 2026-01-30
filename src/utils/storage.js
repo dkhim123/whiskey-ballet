@@ -28,7 +28,8 @@ export const migrateTransactionsBranchId = async (adminId = null, users = []) =>
           migratedCount++
           return { ...txn, branchId }
         } else {
-          return { ...txn, branchId: 'NO_BRANCH' }
+          // Keep as null if no branchId can be inferred
+          return { ...txn, branchId: null }
         }
       }
       return txn
@@ -74,7 +75,7 @@ export const validateAndFixBranchData = async (adminId = null, users = []) => {
     });
 
     // Save updated transactions back to storage
-    await saveSharedData(adminId, { ...sharedData, transactions: updatedTransactions });
+    await writeSharedData({ ...sharedData, transactions: updatedTransactions }, adminId);
     return { success: true, validated: validatedCount };
   } catch (error) {
     console.error('Error validating and fixing branch data:', error);

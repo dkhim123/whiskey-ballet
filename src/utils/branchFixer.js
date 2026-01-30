@@ -4,6 +4,8 @@
  */
 
 import { getDB, STORES } from './indexedDBStorage';
+import { getAllUsers } from './auth';
+
 
 /**
  * Fix corrupted branch data
@@ -46,8 +48,10 @@ export async function fixCorruptedBranches() {
     console.log('3️⃣ Resetting user branch assignments...');
     try {
       const users = await getAllUsers();
-      const updatedUsers = users.map(user => ({ ...user, branchId: null }));
-      await saveAllUsers(updatedUsers);
+      // Reset branchId for all users by updating localStorage directly
+      const usersDb = JSON.parse(localStorage.getItem('pos-users-db') || '[]');
+      const updatedUsers = usersDb.map(user => ({ ...user, branchId: null }));
+      localStorage.setItem('pos-users-db', JSON.stringify(updatedUsers));
       results.steps.push('✅ Reset user branch assignments');
     } catch (error) {
       results.errors.push(`❌ Error resetting user branch assignments: ${error.message}`);

@@ -63,6 +63,9 @@ const COLLECTION_NAME = 'branches';
 // Offline queue for operations when Firebase is unavailable
 let offlineQueue = [];
 
+// Track if event listeners have been initialized to prevent duplicates
+let listenersInitialized = false;
+
 /**
  * Get current admin ID from localStorage
  */
@@ -262,6 +265,45 @@ export function subscribeToBranch(branchId, onUpdate, onError) {
 }
 
 /**
+ * Get a single branch by ID
+ * @param {string} branchId - Branch ID
+ * @returns {Promise<Object|null>} Branch object or null if not found
+ */
+export async function getBranch(branchId) {
+  if (!branchId) {
+    throw new Error('Branch ID is required');
+  }
+
+  const adminId = getCurrentAdminId();
+  
+  try {
+    // Load from IndexedDB
+    const indexedDb = await getDB();
+    const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
+    const store = tx.objectStore(STORES.BRANCHES);
+    
+    const getRequest = store.get(branchId);
+    const branch = await new Promise((resolve, reject) => {
+      getRequest.onsuccess = () => resolve(getRequest.result);
+      getRequest.onerror = () => reject(getRequest.error);
+    });
+    
+    // Verify branch belongs to current admin
+    if (branch && branch.adminId === adminId) {
+      return branch;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error loading branch from IndexedDB:', error);
+    
+    // Fallback to localStorage
+    const branches = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    return branches.find(b => b.id === branchId && b.adminId === adminId) || null;
+  }
+}
+
+/**
  * Update an existing branch
  * @param {string} branchId - Branch ID
  * @param {Object} updates - Fields to update
@@ -413,18 +455,23 @@ export function initializeBranchService() {
     console.error('Error loading offline queue:', error);
   }
 
-  // Save queue on page unload
-  window.addEventListener('beforeunload', () => {
-    if (offlineQueue.length > 0) {
-      localStorage.setItem('branch-offline-queue', JSON.stringify(offlineQueue));
-    }
-  });
+  // Only add event listeners once to prevent memory leaks
+  if (!listenersInitialized) {
+    listenersInitialized = true;
+    
+    // Save queue on page unload
+    window.addEventListener('beforeunload', () => {
+      if (offlineQueue.length > 0) {
+        localStorage.setItem('branch-offline-queue', JSON.stringify(offlineQueue));
+      }
+    });
 
-  // Firebase temporarily disabled
-  // Process queue when connection is restored
-  // window.addEventListener('online', () => {
-  //   if (isFirebaseConfigured() && db) {
-  //     processOfflineQueue();
-  //   }
-  // });
+    // Firebase temporarily disabled
+    // Process queue when connection is restored
+    // window.addEventListener('online', () => {
+    //   if (isFirebaseConfigured() && db) {
+    //     processOfflineQueue();
+    //   }
+    // });
+  }
 }

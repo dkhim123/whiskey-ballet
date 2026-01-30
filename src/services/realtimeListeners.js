@@ -45,4 +45,13 @@ export function subscribeToSuppliers(adminId, onUpdate, onError) {
   });
 }
 
-export { subscribeToSuppliers, subscribeToTransactions, subscribeToInventory, subscribeToExpenses }; // Add other functions as needed
+// Expenses real-time listener
+export function subscribeToExpenses(adminId, onUpdate, onError) {
+  return subscribeToCollection({
+    db,
+    collectionPath: 'expenses',
+    adminId,
+    onUpdate,
+    onError
+  });
+}

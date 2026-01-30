@@ -44,14 +44,21 @@ export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, o
           const filtered = (items || []).filter(item => item.adminId === adminId);
           // If any item does not match adminId, purge all local data
           if ((items || []).some(item => item.adminId !== adminId)) {
-            import('../utils/clearLocalData').then(({ default: clearLocalData }) => clearLocalData());
+            import('../utils/clearLocalData').then(({ default: clearLocalData }) => clearLocalData()).catch(err => {
+              console.error('Error clearing local data:', err);
+              if (onError) onError(err);
+            });
             onUpdate([]);
           } else {
             onUpdate(filtered);
           }
       }).catch(error => {
+        console.error('Error getting items from IndexedDB:', error);
         if (onError) onError(error);
       });
+    }).catch(error => {
+      console.error('Error importing indexedDBStorage:', error);
+      if (onError) onError(error);
     });
     return () => {};
   }
