@@ -7,6 +7,7 @@ import RecentTransactions from "../components/RecentTransactions"
 import AccountabilityModal from "../components/AccountabilityModal"
 import { readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { getTodayAtMidnight, formatTimeAgo } from "../utils/dateUtils"
 
 export default function CashierDashboard({ currentUser }) {
   const [dashboardData, setDashboardData] = useState({
@@ -23,45 +24,25 @@ export default function CashierDashboard({ currentUser }) {
     const loadDashboardData = async () => {
       try {
         const userId = currentUser?.id
-        if (!userId) {
-          console.error('No user ID available')
-          return
-        }
+        if (!userId) return
         
-        // Read from SHARED storage for transactions (visible to all users)
         const adminId = getAdminIdForStorage(currentUser)
         const sharedData = await readSharedData(adminId)
         const allTransactions = sharedData.transactions || []
         
-        // Filter transactions created by THIS cashier only, and by branch
+        // Filter transactions by cashier and branch
         const branchId = currentUser?.branchId
-        if (!branchId) {
-          console.warn(`⚠️ Cashier ${currentUser?.name} has NO branchId assigned!`)
-        }
-        
         const transactions = allTransactions.filter(t => {
           const matchesUser = t.userId === userId
           const matchesBranch = branchId ? t.branchId === branchId : true
-          
-          // Log unassigned transactions
-          if (matchesUser && !t.branchId) {
-            console.log(`⚠️ Transaction ${t.id} by cashier has NO branchId`)
-          }
-          
           return matchesUser && matchesBranch
         })
         
-        console.log(`👤 Cashier Dashboard: ${transactions.length} transactions (User: ${userId}, Branch: ${branchId || 'NONE'})`)
-        
-        // Get today's date at midnight
-        const today = new Date()
-        today.setHours(0, 0, 0, 0)
-        
-        // Filter today's transactions (include ALL transactions - cash, mpesa, and credit)
+        // Get today's transactions
+        const today = getTodayAtMidnight()
         const todayTransactions = transactions.filter(t => {
           const transDate = new Date(t.timestamp)
           transDate.setHours(0, 0, 0, 0)
-          // Include ALL transactions regardless of payment status
           return transDate.getTime() === today.getTime()
         })
         
@@ -70,31 +51,18 @@ export default function CashierDashboard({ currentUser }) {
         const transactionsCount = todayTransactions.length
         const averageSale = transactionsCount > 0 ? Math.round(dailyTotal / transactionsCount) : 0
         
-        // Format recent transactions (last 5)
+        // Format recent transactions
         const recentTransactions = transactions
           .slice(-5)
           .reverse()
-          .map(t => {
-            const timeDiff = Date.now() - new Date(t.timestamp).getTime()
-            const minutes = Math.floor(timeDiff / 60000)
-            const hours = Math.floor(minutes / 60)
-            const days = Math.floor(hours / 24)
-            
-            let timeAgo
-            if (days > 0) timeAgo = `${days}d ago`
-            else if (hours > 0) timeAgo = `${hours}h ago`
-            else if (minutes > 0) timeAgo = `${minutes} min ago`
-            else timeAgo = 'Just now'
-            
-            return {
-              id: t.id,
-              type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : 
-                    t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
-              amount: t.total ?? 0,
-              time: timeAgo,
-              items: t.itemCount ?? 0
-            }
-          })
+          .map(t => ({
+            id: t.id,
+            type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : 
+                  t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
+            amount: t.total ?? 0,
+            time: formatTimeAgo(t.timestamp),
+            items: t.itemCount ?? 0
+          }))
         
         setDashboardData({
           dailyTotal,
@@ -104,7 +72,7 @@ export default function CashierDashboard({ currentUser }) {
           fullTransactions: transactions
         })
       } catch (error) {
-        console.error('Error loading dashboard data:', error)
+        // Silent error handling
       }
     }
     

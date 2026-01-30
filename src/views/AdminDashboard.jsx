@@ -18,6 +18,7 @@ import {
 } from "../services/realtimeListeners"
 import { toast } from "sonner"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
+import { getTodayAtMidnight, getTodayISO, formatTimeAgo } from "../utils/dateUtils"
 import { checkIfMigrationNeeded, migrateDataToBranchIsolation } from "../utils/dataMigration"
 
 export default function AdminDashboard({ currentUser, onPageChange }) {
@@ -34,8 +35,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     try {
       const saved = localStorage.getItem('dismissedDashboardNotifications')
       return saved ? JSON.parse(saved) : {}
-    } catch (error) {
-      console.error('Error loading dismissed notifications:', error)
+    } catch {
       return {}
     }
   })
@@ -105,8 +105,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
 
   // Calculate dashboard metrics
   const dashboardData = useMemo(() => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    const today = getTodayAtMidnight()
 
     // Filter transactions by date and selected filters
     let todayTransactions = transactionsData.filter(t => {
@@ -172,28 +171,15 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     const recentTransactions = todayTransactions
       .slice(-5)
       .reverse()
-      .map(t => {
-        const timeDiff = Date.now() - new Date(t.timestamp).getTime()
-        const minutes = Math.floor(timeDiff / 60000)
-        const hours = Math.floor(minutes / 60)
-        const days = Math.floor(hours / 24)
-        
-        let timeAgo
-        if (days > 0) timeAgo = `${days}d ago`
-        else if (hours > 0) timeAgo = `${hours}h ago`
-        else if (minutes > 0) timeAgo = `${minutes} min ago`
-        else timeAgo = 'Just now'
-        
-        return {
-          id: t.id,
-          type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
-          amount: t.total,
-          time: timeAgo,
-          items: t.itemCount,
-          cashier: t.cashier || 'System',
-          cashierId: t.cashierId
-        }
-      })
+      .map(t => ({
+        id: t.id,
+        type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
+        amount: t.total,
+        time: formatTimeAgo(t.timestamp),
+        items: t.itemCount,
+        cashier: t.cashier || 'System',
+        cashierId: t.cashierId
+      }))
 
     return {
       cashCollected,
@@ -214,17 +200,17 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
 
   const dismissNotification = (type) => {
     try {
-      const today = new Date().toISOString().split('T')[0]
+      const today = getTodayISO()
       const newDismissed = { ...dismissedNotifications, [type]: today }
       setDismissedNotifications(newDismissed)
       localStorage.setItem('dismissedDashboardNotifications', JSON.stringify(newDismissed))
     } catch (error) {
-      console.error('Error saving dismissed notification:', error)
+      // Silent error handling
     }
   }
 
   const isNotificationDismissed = (type) => {
-    const today = new Date().toISOString().split('T')[0]
+    const today = getTodayISO()
     return dismissedNotifications[type] === today
   }
 
