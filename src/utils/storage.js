@@ -28,7 +28,8 @@ export const migrateTransactionsBranchId = async (adminId = null, users = []) =>
           migratedCount++
           return { ...txn, branchId }
         } else {
-          return { ...txn, branchId: 'NO_BRANCH' }
+          // Keep as null if no branchId can be inferred
+          return { ...txn, branchId: null }
         }
       }
       return txn

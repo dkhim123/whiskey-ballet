@@ -15,6 +15,7 @@ import {
   writeBranchToRealtimeDB,
   writeUserToRealtimeDB
 } from "./firebaseRealtime"
+import { requireValidBranchId, normalizeBranchId } from "./branchValidation"
 
 class DataService {
   constructor() {
@@ -49,6 +50,8 @@ class DataService {
 
   async addProduct(product) {
     await this.init()
+    // Validate that product has a branchId
+    requireValidBranchId(product, 'Product')
     const result = await db.add(STORES.PRODUCTS, product)
     await writeProductToRealtimeDB(product)
     return result
@@ -95,7 +98,7 @@ class DataService {
 
   async addTransaction(transaction, branchId) {
     await this.init()
-    const finalBranchId = branchId || transaction.branchId
+    const finalBranchId = normalizeBranchId(branchId || transaction.branchId)
     if (!finalBranchId) throw new Error('branchId is required for all transactions')
     const txn = { ...transaction, branchId: finalBranchId }
     const result = await db.add(STORES.TRANSACTIONS, txn)
