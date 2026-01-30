@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { X } from "lucide-react"
 import TopBar from "../components/TopBar"
 import DashboardCard from "../components/DashboardCard"
@@ -9,39 +9,33 @@ import AccountabilityModal from "../components/AccountabilityModal"
 import ActivityFeed from "../components/ActivityFeed"
 import BranchSelector from "../components/BranchSelector"
 import { getAdminIdForStorage } from "../utils/auth"
-import { subscribeToInventory, subscribeToTransactions } from "../services/realtimeListeners"
+import { 
+  subscribeToInventory, 
+  subscribeToTransactions, 
+  subscribeToExpenses, 
+  subscribeToUsers, 
+  subscribeToSettings 
+} from "../services/realtimeListeners"
 import { toast } from "sonner"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
+import { getTodayAtMidnight, getTodayISO, formatTimeAgo } from "../utils/dateUtils"
 import { checkIfMigrationNeeded, migrateDataToBranchIsolation } from "../utils/dataMigration"
 
 export default function AdminDashboard({ currentUser, onPageChange }) {
   const [selectedBranch, setSelectedBranch] = useState('')
   const [selectedCashier, setSelectedCashier] = useState('')
-  const [cashiers, setCashiers] = useState([])
-  const [dashboardData, setDashboardData] = useState({
-    cashCollected: 0,
-    mpesaCollected: 0,
-    expectedTotal: 0,
-    salesCount: 0,
-    lowStockAlerts: 0,
-    expiredItems: 0,
-    expiringSoonItems: 0,
-    recentTransactions: [],
-    fullTransactions: [],
-    totalExpenses: 0,
-    profit: 0,
-    spendingLimitPercentage: 50,
-    isOverSpendingLimit: false
-  })
-  const [alertShownToday, setAlertShownToday] = useState(false)
+  const [inventoryData, setInventoryData] = useState([])
+  const [transactionsData, setTransactionsData] = useState([])
+  const [expensesData, setExpensesData] = useState([])
+  const [usersData, setUsersData] = useState([])
+  const [settingsData, setSettingsData] = useState(null)
   const [showAccountabilityModal, setShowAccountabilityModal] = useState(false)
   const [accountabilityType, setAccountabilityType] = useState(null)
   const [dismissedNotifications, setDismissedNotifications] = useState(() => {
     try {
       const saved = localStorage.getItem('dismissedDashboardNotifications')
       return saved ? JSON.parse(saved) : {}
-    } catch (error) {
-      console.error('Error loading dismissed notifications:', error)
+    } catch {
       return {}
     }
   })
@@ -59,7 +53,6 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             'Click OK to proceed with the update (recommended).'
           )
           if (confirmed) {
-            // Get default branch from admin's branches or use first available branch
             const defaultBranch = prompt(
               'Enter the default Branch ID for existing data:\n' +
               '(This will be assigned to items that don\'t have a branch yet)',
@@ -69,7 +62,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
               const result = await migrateDataToBranchIsolation(currentUser, defaultBranch.trim())
               if (result.success) {
                 toast.success(`Migration complete! ${result.migratedCount} items updated.`)
-                window.location.reload() // Reload to show migrated data
+                window.location.reload()
               } else {
                 toast.error('Migration failed: ' + result.error)
               }
@@ -81,135 +74,143 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     checkMigration()
   }, [currentUser])
 
+  // Subscribe to all data sources
   useEffect(() => {
-    if (!currentUser) return;
-    const adminId = getAdminIdForStorage(currentUser);
-    let inventoryUnsub = null;
-    let transactionsUnsub = null;
-    let inventoryData = [];
-    let transactionsData = [];
+    if (!currentUser) return
 
-    // Helper to update dashboard state
-    const updateDashboard = () => {
-      // Get today's date at midnight
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      // Filter today's transactions
-      let todayTransactions = transactionsData.filter(t => {
-        const transDate = new Date(t.timestamp);
-        transDate.setHours(0, 0, 0, 0);
-        return transDate.getTime() === today.getTime();
-      });
-
-      // Filter cashiers by selected branch
-      const users = [];
-      // TODO: If you want real-time users, add a subscribeToUsers listener and setCashiers accordingly
-      // For now, keep cashiers empty or from another source if available
-      setCashiers([]);
-
-      // Filter by selected branch if admin has chosen one
-      if (selectedBranch) {
-        todayTransactions = todayTransactions.filter(t => t.branchId === selectedBranch);
-      }
-      // Filter by selected cashier if chosen
-      if (selectedCashier) {
-        todayTransactions = todayTransactions.filter(t => t.userId === selectedCashier);
-      }
-
-      // Calculate metrics
-      const cashCollected = todayTransactions
-        .filter(t => t.paymentMethod === 'cash' && (t.paymentStatus === 'completed' || !t.paymentStatus))
-        .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0);
-      const mpesaCollected = todayTransactions
-        .filter(t => t.paymentMethod === 'mpesa' && (t.paymentStatus === 'completed' || !t.paymentStatus))
-        .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0);
-      const expectedTotal = cashCollected + mpesaCollected;
-
-      // Expenses and settings: TODO - subscribe to expenses/settings if needed
-      const totalExpenses = 0;
-      const profit = expectedTotal - totalExpenses;
-      const spendingLimitPercentage = 50;
-      const isOverSpendingLimit = false;
-
-      // Get low stock count
-      const lowStockCount = inventoryData.filter(item => item.quantity <= item.reorderLevel).length;
-      // Get expired and expiring soon counts
-      const expiredCount = inventoryData.filter(item => item.expiryDate && isExpired(item.expiryDate)).length;
-      const expiringSoonCount = inventoryData.filter(item => item.expiryDate && isExpiringSoon(item.expiryDate) && !isExpired(item.expiryDate)).length;
-
-      // Format recent transactions (last 5)
-      const recentTransactions = todayTransactions
-        .slice(-5)
-        .reverse()
-        .map(t => {
-          const timeDiff = Date.now() - new Date(t.timestamp).getTime();
-          const minutes = Math.floor(timeDiff / 60000);
-          const hours = Math.floor(minutes / 60);
-          const days = Math.floor(hours / 24);
-          let timeAgo;
-          if (days > 0) timeAgo = `${days}d ago`;
-          else if (hours > 0) timeAgo = `${hours}h ago`;
-          else if (minutes > 0) timeAgo = `${minutes} min ago`;
-          else timeAgo = 'Just now';
-          return {
-            id: t.id,
-            type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
-            amount: t.total,
-            time: timeAgo,
-            items: t.itemCount,
-            cashier: t.cashier || 'System',
-            cashierId: t.cashierId
-          };
-        });
-
-      setDashboardData({
-        cashCollected,
-        mpesaCollected,
-        expectedTotal,
-        salesCount: todayTransactions.length,
-        lowStockAlerts: lowStockCount,
-        expiredItems: expiredCount,
-        expiringSoonItems: expiringSoonCount,
-        recentTransactions,
-        fullTransactions: transactionsData,
-        totalExpenses,
-        profit,
-        spendingLimitPercentage,
-        isOverSpendingLimit
-      });
-    };
-
-    // Subscribe to inventory
-    inventoryUnsub = subscribeToInventory(adminId, (data) => {
-      inventoryData = data;
-      updateDashboard();
-    });
-    // Subscribe to transactions
-    transactionsUnsub = subscribeToTransactions(adminId, (data) => {
-      transactionsData = data;
-      updateDashboard();
-    });
+    const adminId = getAdminIdForStorage(currentUser)
+    
+    const unsubscribers = [
+      subscribeToInventory(adminId, setInventoryData),
+      subscribeToTransactions(adminId, setTransactionsData),
+      subscribeToExpenses(adminId, setExpensesData),
+      subscribeToUsers(adminId, setUsersData),
+      subscribeToSettings(adminId, (data) => setSettingsData(data[0] || null))
+    ]
 
     return () => {
-      if (inventoryUnsub) inventoryUnsub();
-      if (transactionsUnsub) transactionsUnsub();
-    };
-  }, [currentUser, selectedBranch, selectedCashier]);
+      unsubscribers.forEach(unsub => unsub && unsub())
+    }
+  }, [currentUser])
+
+  // Filter cashiers for selected branch
+  const cashiers = useMemo(() => {
+    if (!selectedBranch || !usersData.length) return []
+    return usersData.filter(user => 
+      user.role === 'cashier' && 
+      user.branchId === selectedBranch &&
+      user.isActive
+    )
+  }, [selectedBranch, usersData])
+
+  // Calculate dashboard metrics
+  const dashboardData = useMemo(() => {
+    const today = getTodayAtMidnight()
+
+    // Filter transactions by date and selected filters
+    let todayTransactions = transactionsData.filter(t => {
+      const transDate = new Date(t.timestamp)
+      transDate.setHours(0, 0, 0, 0)
+      return transDate.getTime() === today.getTime()
+    })
+
+    // Apply branch filter
+    if (selectedBranch) {
+      todayTransactions = todayTransactions.filter(t => t.branchId === selectedBranch)
+    }
+
+    // Apply cashier filter
+    if (selectedCashier) {
+      todayTransactions = todayTransactions.filter(t => t.userId === selectedCashier)
+    }
+
+    // Calculate financial metrics
+    const cashCollected = todayTransactions
+      .filter(t => t.paymentMethod === 'cash' && (t.paymentStatus === 'completed' || !t.paymentStatus))
+      .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
+      
+    const mpesaCollected = todayTransactions
+      .filter(t => t.paymentMethod === 'mpesa' && (t.paymentStatus === 'completed' || !t.paymentStatus))
+      .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
+      
+    const expectedTotal = cashCollected + mpesaCollected
+
+    // Calculate today's expenses
+    let todayExpenses = expensesData.filter(e => {
+      const expenseDate = new Date(e.date)
+      expenseDate.setHours(0, 0, 0, 0)
+      return expenseDate.getTime() === today.getTime()
+    })
+
+    // Apply branch filter to expenses
+    if (selectedBranch) {
+      todayExpenses = todayExpenses.filter(e => e.branchId === selectedBranch)
+    }
+
+    const totalExpenses = todayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0)
+    const profit = expectedTotal - totalExpenses
+
+    // Get spending limit from settings
+    const spendingLimitPercentage = settingsData?.spendingLimitPercentage || 50
+    const isOverSpendingLimit = totalExpenses > (expectedTotal * spendingLimitPercentage / 100)
+
+    // Filter inventory by branch
+    let filteredInventory = inventoryData
+    if (selectedBranch) {
+      filteredInventory = inventoryData.filter(item => item.branchId === selectedBranch)
+    }
+
+    // Calculate inventory alerts
+    const lowStockCount = filteredInventory.filter(item => item.quantity <= item.reorderLevel).length
+    const expiredCount = filteredInventory.filter(item => item.expiryDate && isExpired(item.expiryDate)).length
+    const expiringSoonCount = filteredInventory.filter(item => 
+      item.expiryDate && isExpiringSoon(item.expiryDate) && !isExpired(item.expiryDate)
+    ).length
+
+    // Format recent transactions
+    const recentTransactions = todayTransactions
+      .slice(-5)
+      .reverse()
+      .map(t => ({
+        id: t.id,
+        type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
+        amount: t.total,
+        time: formatTimeAgo(t.timestamp),
+        items: t.itemCount,
+        cashier: t.cashier || 'System',
+        cashierId: t.cashierId
+      }))
+
+    return {
+      cashCollected,
+      mpesaCollected,
+      expectedTotal,
+      salesCount: todayTransactions.length,
+      lowStockAlerts: lowStockCount,
+      expiredItems: expiredCount,
+      expiringSoonItems: expiringSoonCount,
+      recentTransactions,
+      fullTransactions: transactionsData,
+      totalExpenses,
+      profit,
+      spendingLimitPercentage,
+      isOverSpendingLimit
+    }
+  }, [transactionsData, expensesData, inventoryData, settingsData, selectedBranch, selectedCashier])
 
   const dismissNotification = (type) => {
     try {
-      const today = new Date().toISOString().split('T')[0]
+      const today = getTodayISO()
       const newDismissed = { ...dismissedNotifications, [type]: today }
       setDismissedNotifications(newDismissed)
       localStorage.setItem('dismissedDashboardNotifications', JSON.stringify(newDismissed))
     } catch (error) {
-      console.error('Error saving dismissed notification:', error)
+      // Silent error handling
     }
   }
 
   const isNotificationDismissed = (type) => {
-    const today = new Date().toISOString().split('T')[0]
+    const today = getTodayISO()
     return dismissedNotifications[type] === today
   }
 
@@ -220,13 +221,12 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
       {/* Branch and Cashier Filters - Admin Only */}
       {currentUser?.role === 'admin' && (
         <div className="px-3 sm:px-6 py-4 bg-muted/30 border-b border-border">
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
             <div className="flex-1">
               <BranchSelector
                 currentUser={currentUser}
                 selectedBranch={selectedBranch}
                 onBranchChange={(branchId) => {
-                  console.log('🏢 Branch changed to:', branchId, typeof branchId)
                   setSelectedBranch(branchId)
                   setSelectedCashier('') // Reset cashier when branch changes
                 }}
@@ -234,7 +234,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             </div>
             {selectedBranch && cashiers.length > 0 && (
               <div className="flex-1">
-                <label className="block text-sm font-medium text-muted-foreground mb-2">
+                <label className="block text-sm font-medium text-foreground mb-2">
                   Filter by Cashier
                 </label>
                 <select
@@ -245,10 +245,28 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
                   <option value="">All Cashiers ({cashiers.length})</option>
                   {cashiers.map(cashier => (
                     <option key={cashier.id} value={cashier.id}>
-                      {cashier.name} - {cashier.phone}
+                      {cashier.name}
                     </option>
                   ))}
                 </select>
+              </div>
+            )}
+            {(selectedBranch || selectedCashier) && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 border border-primary/20 rounded-lg">
+                <span className="text-xs font-medium text-primary">
+                  {selectedBranch && selectedCashier ? 'Branch & Cashier Filter Active' :
+                   selectedBranch ? 'Branch Filter Active' :
+                   'Cashier Filter Active'}
+                </span>
+                <button
+                  onClick={() => {
+                    setSelectedBranch('')
+                    setSelectedCashier('')
+                  }}
+                  className="text-xs text-primary hover:text-primary/80 underline"
+                >
+                  Clear All
+                </button>
               </div>
             )}
           </div>

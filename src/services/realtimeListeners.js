@@ -55,3 +55,25 @@ export function subscribeToExpenses(adminId, onUpdate, onError) {
     onError
   });
 }
+
+// Users real-time listener
+export function subscribeToUsers(adminId, onUpdate, onError) {
+  return subscribeToCollection({
+    db,
+    collectionPath: 'users',
+    adminId,
+    onUpdate,
+    onError
+  });
+}
+
+// Settings real-time listener
+export function subscribeToSettings(adminId, onUpdate, onError) {
+  return subscribeToCollection({
+    db,
+    collectionPath: 'settings',
+    adminId,
+    onUpdate,
+    onError
+  });
+}
