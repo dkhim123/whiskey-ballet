@@ -262,6 +262,45 @@ export function subscribeToBranch(branchId, onUpdate, onError) {
 }
 
 /**
+ * Get a single branch by ID
+ * @param {string} branchId - Branch ID
+ * @returns {Promise<Object|null>} Branch object or null if not found
+ */
+export async function getBranch(branchId) {
+  if (!branchId) {
+    throw new Error('Branch ID is required');
+  }
+
+  const adminId = getCurrentAdminId();
+  
+  try {
+    // Load from IndexedDB
+    const indexedDb = await getDB();
+    const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
+    const store = tx.objectStore(STORES.BRANCHES);
+    
+    const getRequest = store.get(branchId);
+    const branch = await new Promise((resolve, reject) => {
+      getRequest.onsuccess = () => resolve(getRequest.result);
+      getRequest.onerror = () => reject(getRequest.error);
+    });
+    
+    // Verify branch belongs to current admin
+    if (branch && branch.adminId === adminId) {
+      return branch;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error loading branch from IndexedDB:', error);
+    
+    // Fallback to localStorage
+    const branches = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    return branches.find(b => b.id === branchId && b.adminId === adminId) || null;
+  }
+}
+
+/**
  * Update an existing branch
  * @param {string} branchId - Branch ID
  * @param {Object} updates - Fields to update

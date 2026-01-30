@@ -100,9 +100,8 @@ const withPWA = withPWAInit({
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
-    // Temporarily ignore build errors for gradual TypeScript adoption
-    // TODO: Remove this once all TypeScript errors are fixed
-    ignoreBuildErrors: true,
+    // TypeScript type checking is now enabled
+    ignoreBuildErrors: false,
   },
   images: {
     unoptimized: true,
