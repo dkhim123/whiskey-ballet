@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow users to read/write their own user profile
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    // Add more granular rules for other collections as needed
+    // Example: allow only authenticated users to read/write other collections
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

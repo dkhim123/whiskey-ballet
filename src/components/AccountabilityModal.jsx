@@ -367,7 +367,7 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
           ) : (
             <>
               {/* Summary Card */}
-              <div className="bg-gradient-to-br from-primary/10 to-primary/5 border-2 border-primary/30 rounded-xl p-6 mb-6">
+              <div className="bg-linear-to-br from-primary/10 to-primary/5 border-2 border-primary/30 rounded-xl p-6 mb-6">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground mb-1">

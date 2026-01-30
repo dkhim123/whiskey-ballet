@@ -792,7 +792,7 @@ export default function DataManagementPage({ currentUser }) {
               : 'bg-yellow-50 border-yellow-500 text-yellow-800'
           }`}>
             <div className="flex items-start gap-3">
-              <AlertTriangle className="w-6 h-6 flex-shrink-0 mt-0.5" />
+              <AlertTriangle className="w-6 h-6 shrink-0 mt-0.5" />
               <div>
                 <p className="font-semibold text-lg">⚠️ {backupWarning.message}</p>
                 <p className="text-sm mt-1">
@@ -819,7 +819,7 @@ export default function DataManagementPage({ currentUser }) {
                 : 'bg-yellow-50 border-yellow-500 text-yellow-800'
             }`}>
               <div className="flex items-start gap-3">
-                <AlertTriangle className="w-6 h-6 flex-shrink-0 mt-0.5" />
+                <AlertTriangle className="w-6 h-6 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-semibold text-lg">
                     {storageInfo.percentUsed > 90 ? '⚠️ Storage Almost Full!' : '⚠️ Storage Getting Full'}
@@ -910,7 +910,7 @@ export default function DataManagementPage({ currentUser }) {
             </p>
             <button
               onClick={() => setShowTrashBin(true)}
-              className="flex items-center gap-3 px-6 py-4 bg-gradient-to-br from-red-50 to-orange-50 hover:from-red-100 hover:to-orange-100 dark:from-red-900/20 dark:to-orange-900/20 border-2 border-red-600 dark:border-red-700 rounded-lg transition-all group shadow-lg w-full md:w-auto"
+              className="flex items-center gap-3 px-6 py-4 bg-linear-to-br from-red-50 to-orange-50 hover:from-red-100 hover:to-orange-100 dark:from-red-900/20 dark:to-orange-900/20 border-2 border-red-600 dark:border-red-700 rounded-lg transition-all group shadow-lg w-full md:w-auto"
             >
               <Trash2 className="w-6 h-6 text-red-700 dark:text-red-400 group-hover:scale-110 transition-transform" />
               <div className="text-left">
@@ -931,7 +931,7 @@ export default function DataManagementPage({ currentUser }) {
             {/* Export Complete Backup CSV */}
             <button
               onClick={exportAllDataToCSV}
-              className="flex flex-col items-start p-6 bg-gradient-to-br from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/20 border-2 border-green-600 dark:border-green-700 rounded-lg transition-all group shadow-lg"
+              className="flex flex-col items-start p-6 bg-linear-to-br from-green-50 to-emerald-50 hover:from-green-100 hover:to-emerald-100 dark:from-green-900/20 dark:to-emerald-900/20 border-2 border-green-600 dark:border-green-700 rounded-lg transition-all group shadow-lg"
             >
               <div className="flex items-center gap-3 mb-3 w-full">
                 <Database className="w-8 h-8 text-green-700 dark:text-green-400 group-hover:scale-110 transition-transform" />
@@ -1082,7 +1082,7 @@ export default function DataManagementPage({ currentUser }) {
           {/* Delete Section - Separate and More Prominent Warning */}
           <div className="mt-6 p-4 bg-red-50 border-2 border-red-500 rounded-lg">
             <div className="flex items-start gap-3 mb-3">
-              <AlertTriangle className="w-6 h-6 text-red-700 flex-shrink-0 mt-1" />
+              <AlertTriangle className="w-6 h-6 text-red-700 shrink-0 mt-1" />
               <div className="flex-1">
                 <h3 className="font-bold text-red-900 text-lg mb-1">⚠️ Danger Zone</h3>
                 <p className="text-sm text-red-700 mb-3">
@@ -1121,7 +1121,7 @@ export default function DataManagementPage({ currentUser }) {
               
               <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-300">
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="w-5 h-5 text-yellow-700 flex-shrink-0 mt-0.5" />
+                  <AlertTriangle className="w-5 h-5 text-yellow-700 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-yellow-900 font-semibold mb-1">⚠️ Important: Keep Regular Backups!</p>
                     <p className="text-sm text-yellow-800">
@@ -1142,7 +1142,7 @@ export default function DataManagementPage({ currentUser }) {
 
               <div className="bg-green-50 p-4 rounded-lg border border-green-300">
                 <div className="flex items-start gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-green-700 flex-shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-5 h-5 text-green-700 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-green-900 font-semibold mb-1">✅ How to Keep Your Data Safe</p>
                     <ol className="text-sm text-green-800 space-y-2 ml-4 list-decimal">
@@ -1200,7 +1200,7 @@ export default function DataManagementPage({ currentUser }) {
 
               <div className="bg-green-50 p-4 rounded-lg border border-green-300">
                 <div className="flex items-start gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-green-700 flex-shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-5 h-5 text-green-700 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-green-900 font-semibold mb-1">✅ Desktop Mode Benefits</p>
                     <ul className="text-sm text-green-800 space-y-1 ml-4">
@@ -1215,7 +1215,7 @@ export default function DataManagementPage({ currentUser }) {
 
               <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-300">
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="w-5 h-5 text-yellow-700 flex-shrink-0 mt-0.5" />
+                  <AlertTriangle className="w-5 h-5 text-yellow-700 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-yellow-900 font-semibold mb-1">⚠️ Still Create Regular Backups!</p>
                     <p className="text-sm text-yellow-800">

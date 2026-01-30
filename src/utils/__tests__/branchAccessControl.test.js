@@ -137,6 +137,17 @@ describe('Branch Access Control', () => {
       const result = filterTransactionsByBranch(sampleTransactions, johnCashier)
       expect(result.find(txn => txn.id === 'txn6')).toBeUndefined()
     })
+
+    test('Cashier with no branchId cannot access transactions', () => {
+      const cashierWithoutBranch = { role: 'cashier', branchId: null };
+      const result = filterTransactionsByBranch(sampleTransactions, cashierWithoutBranch);
+      expect(result).toHaveLength(0);
+    })
+
+    test('Transactions with missing branchId are excluded from branch-specific views', () => {
+      const result = filterTransactionsByBranch(sampleTransactions, johnCashier);
+      expect(result.find(txn => !txn.branchId)).toBeUndefined();
+    })
   })
 
   describe('canAccessBranch', () => {
@@ -195,16 +206,22 @@ describe('Branch Access Control', () => {
     ]
 
     test('Admin can access all branches', () => {
-      const result = getAccessibleBranches(adminUser, allBranches)
-      expect(result).toHaveLength(3)
-      expect(result).toEqual(allBranches)
-    })
+      const result = getAccessibleBranches(adminUser, allBranches);
+      expect(result).toHaveLength(3);
+      expect(result).toEqual(allBranches);
+    });
 
-    test('Cashier can only access their branch', () => {
-      const result = getAccessibleBranches(johnCashier, allBranches)
-      expect(result).toHaveLength(1)
-      expect(result[0].id).toBe('kasarani')
-    })
+    test('Cashier can only access their assigned branch', () => {
+      const result = getAccessibleBranches(johnCashier, allBranches);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(johnCashier.branchId);
+    });
+
+    test('Cashier with no branchId cannot access any branch', () => {
+      const cashierWithoutBranch = { role: 'cashier', branchId: null };
+      const result = getAccessibleBranches(cashierWithoutBranch, allBranches);
+      expect(result).toHaveLength(0);
+    });
 
     test('Returns empty array for null user', () => {
       const result = getAccessibleBranches(null, allBranches)

@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
-import { readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToPurchaseOrders } from "../services/realtimeExtraListeners"
+import { subscribeToSuppliers } from "../services/realtimeListeners"
 import { createUserSnapshot } from "../utils/userTracking"
 
 const PO_STATUSES = ["draft", "ordered", "partially_received", "received", "cancelled"]
@@ -62,15 +63,28 @@ export default function PurchaseOrdersPage({ currentUser, onInventoryChange }) {
     }
   }
 
+  // Real-time Firestore suppliers, inventory, and purchaseOrders listeners
   useEffect(() => {
-    // Force immediate load when component mounts or user changes
-    loadData()
-    
-    // Refresh every 5 seconds to sync changes made by other users (cashiers, managers, admins)
-    // This ensures real-time visibility of purchase orders across all user sessions
-    const interval = setInterval(loadData, 5000)
-    return () => clearInterval(interval)
-  }, [currentUser])
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsubSuppliers = null;
+    let unsubInventory = null;
+    let unsubPurchaseOrders = null;
+    unsubSuppliers = subscribeToSuppliers(adminId, (data) => {
+      setSuppliers(data);
+    });
+    unsubInventory = subscribeToInventory(adminId, (data) => {
+      setInventory(data);
+    });
+    unsubPurchaseOrders = subscribeToPurchaseOrders(adminId, (data) => {
+      setPurchaseOrders(data);
+    });
+    return () => {
+      if (unsubSuppliers) unsubSuppliers();
+      if (unsubInventory) unsubInventory();
+      if (unsubPurchaseOrders) unsubPurchaseOrders();
+    };
+  }, [currentUser]);
 
   // Save purchase orders to storage
   const savePurchaseOrders = async (updatedPOs) => {
@@ -593,7 +607,7 @@ function CreatePOModal({ suppliers, inventory, currentUser, onClose, onCreate, o
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
       <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-6xl max-h-[95vh] flex flex-col">
-        <div className="p-4 sm:p-6 border-b border-border flex-shrink-0">
+        <div className="p-4 sm:p-6 border-b border-border shrink-0">
           <h2 className="text-xl sm:text-2xl font-bold text-foreground">Create Purchase Order</h2>
         </div>
 
@@ -945,9 +959,9 @@ function QuickAddSupplierModal({ onClose, onSave }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-2 sm:p-4">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-60 p-2 sm:p-4">
       <div className="bg-card border-2 border-primary rounded-lg shadow-2xl max-w-md w-full max-h-[90vh] flex flex-col">
-        <div className="p-4 border-b border-border bg-primary/10 flex-shrink-0">
+        <div className="p-4 border-b border-border bg-primary/10 shrink-0">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold text-foreground">✨ Quick Add Supplier</h3>
             <button

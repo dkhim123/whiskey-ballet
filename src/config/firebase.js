@@ -4,9 +4,10 @@
  * Provides database (Firestore) and authentication services
  */
 
-import { initializeApp } from 'firebase/app'
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore'
+import { initializeApp, getApps } from 'firebase/app'
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore'
 import { getAuth } from 'firebase/auth'
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 // Firebase configuration from environment variables
 // These are loaded from .env.local (kept secret)
@@ -30,40 +31,56 @@ const isFirebaseConfigured = () => {
 }
 
 // Initialize Firebase
+
 let app = null
 let db = null
 let auth = null
+let storage = null
 
 if (isFirebaseConfigured()) {
   try {
-    // Initialize Firebase app
-    app = initializeApp(firebaseConfig)
-    
-    // Get Firestore database instance
-    db = getFirestore(app)
-    
+    // SSR-safe: always use getApps()[0] if already initialized
+    if (typeof window === 'undefined') {
+      // On server, always use getApps()[0] if exists, else initialize
+      app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+    } else {
+      // On client, same logic
+      app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+    }
+
+    // Get Firestore database instance with modern local cache
+    db = initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+    })
+
     // Get Authentication instance
     auth = getAuth(app)
 
-    // Enable offline persistence (works even without internet)
-    if (typeof window !== 'undefined') {
-      enableIndexedDbPersistence(db).catch((err) => {
-        if (err.code === 'failed-precondition') {
-          console.warn('⚠️ Firebase: Multiple tabs open, persistence only in one tab')
-        } else if (err.code === 'unimplemented') {
-          console.warn('⚠️ Firebase: Browser does not support persistence')
-        }
-      })
-    }
+    // Get Storage instance
+    storage = getStorage(app)
 
-    console.log('✅ Firebase initialized successfully')
-    console.log('📍 Project:', firebaseConfig.projectId)
+    if (typeof window !== 'undefined') {
+      console.log('✅ Firebase initialized successfully')
+      console.log('📍 Project:', firebaseConfig.projectId)
+    }
   } catch (error) {
     console.error('❌ Firebase initialization error:', error)
   }
 } else {
-  console.warn('⚠️ Firebase not configured - check .env.local file')
+  if (typeof window !== 'undefined') {
+    console.warn('⚠️ Firebase not configured - check .env.local file')
+  }
 }
 
+// Firebase Storage utility functions
+export const uploadFileToStorage = async (file, path) => {
+  if (!storage) throw new Error('Firebase Storage not initialized')
+  const fileRef = storageRef(storage, path)
+  await uploadBytes(fileRef, file)
+  return getDownloadURL(fileRef)
+}
+
+// Only export storage once below
+
 // Export for use in other files
-export { app, db, auth, isFirebaseConfigured }
+export { app, db, auth, isFirebaseConfigured, storage, storageRef, uploadBytes, getDownloadURL }

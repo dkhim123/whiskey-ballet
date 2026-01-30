@@ -1,6 +1,6 @@
 /**
  * IndexedDB Database Manager
- * Handles local storage with automatic sync to Vercel backend
+ * Handles local storage with automatic sync (offline-first)
  */
 
 const DB_NAME = "WhiskeyBalletPOS"
@@ -18,22 +18,33 @@ const STORES = {
 class Database {
   constructor() {
     this.db = null
-    this.isOnline = navigator.onLine
-    this.syncInProgress = false
-    this.setupOnlineListener()
+    // Only access navigator.onLine in the browser
+      if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+        this.isOnline = navigator.onLine
+        this.syncInProgress = false
+        this.setupOnlineListener()
+      } else {
+        this.isOnline = false
+        this.syncInProgress = false
+        // Do NOT call setupOnlineListener on server
+      }
   }
 
   setupOnlineListener() {
-    window.addEventListener("online", () => {
-      this.isOnline = true
-      console.log("🟢 Online - Starting sync...")
-      this.syncWithServer()
-    })
+    if (typeof window !== 'undefined') {
+      if (typeof window !== 'undefined') {
+        window.addEventListener("online", () => {
+          this.isOnline = true
+          // ...existing code...
+          this.syncWithServer()
+        })
 
-    window.addEventListener("offline", () => {
-      this.isOnline = false
-      console.log("🔴 Offline - Using local database")
-    })
+        window.addEventListener("offline", () => {
+          this.isOnline = false
+          // ...existing code...
+        })
+      }
+    }
   }
 
   async init() {
@@ -43,7 +54,7 @@ class Database {
       request.onerror = () => reject(request.error)
       request.onsuccess = () => {
         this.db = request.result
-        console.log("✅ Database initialized")
+        // ...existing code...
         resolve(this.db)
       }
 
@@ -86,7 +97,7 @@ class Database {
           inventoryStore.createIndex("synced", "synced", { unique: false })
         }
 
-        console.log("📦 Database stores created")
+        // ...existing code...
       }
     })
   }
@@ -208,14 +219,14 @@ class Database {
     if (!this.isOnline || this.syncInProgress) return
 
     this.syncInProgress = true
-    console.log("🔄 Syncing with server...")
+    // ...existing code...
 
     try {
       // Get all unsynced items from queue
       const queue = await this.getAll(STORES.SYNC_QUEUE)
 
       if (queue.length === 0) {
-        console.log("✅ Nothing to sync")
+        // ...existing code...
         this.syncInProgress = false
         return
       }
@@ -244,7 +255,7 @@ class Database {
         // Pull latest data from server
         await this.pullFromServer()
 
-        console.log(`✅ Synced ${queue.length} items`)
+        // ...existing code...
       } else {
         console.error("❌ Sync failed:", response.statusText)
       }
@@ -304,7 +315,7 @@ class Database {
           }
         }
 
-        console.log("✅ Pulled latest data from server")
+        // ...existing code...
       }
     } catch (error) {
       console.error("❌ Pull error:", error)

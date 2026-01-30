@@ -6,8 +6,8 @@ import TopBar from "../components/TopBar"
 import AdminTrashBin from "../components/AdminTrashBin"
 import TransactionDetailsModal from "../components/TransactionDetailsModal"
 import BranchSelector from "../components/BranchSelector"
-import { readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToTransactions } from "../services/realtimeListeners"
 import { exportTransactionsToCSV } from "../utils/csvExport"
 import { getFirstName } from "../utils/nameHelpers"
 
@@ -36,81 +36,40 @@ export default function TransactionsHistoryPage({ currentUser }) {
   const itemsPerPage = 20
 
   useEffect(() => {
-    loadTransactions()
-  }, [currentUser, selectedBranch, selectedCashier])
-
-  const loadTransactions = async () => {
-    try {
-      setLoading(true)
-      const userId = currentUser?.id
-      if (!userId) {
-        console.error('No user ID available')
-        return
-      }
-      
-      const adminId = getAdminIdForStorage(currentUser)
-      const sharedData = await readSharedData(adminId)
-      const allTransactions = sharedData.transactions || []
-      const users = sharedData.users || []
-      
-      // Filter transactions by branch and role
-      let filteredTransactions = allTransactions
-      
+    if (!currentUser) return;
+    setLoading(true);
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsub = null;
+    unsub = subscribeToTransactions(adminId, (allTransactions) => {
+      let filteredTransactions = allTransactions;
+      // Simulate users list as empty (for cashiers list, you may want a real-time users listener)
+      const users = [];
       if (currentUser.role === 'cashier') {
-        // Cashiers can only see transactions from their branch
-        const cashierBranch = currentUser.branchId
+        const cashierBranch = currentUser.branchId;
         if (!cashierBranch) {
-          console.warn(`⚠️ Cashier ${currentUser.name} has NO branchId assigned! Cannot filter transactions.`)
-          filteredTransactions = []
+          filteredTransactions = [];
         } else {
-          filteredTransactions = allTransactions.filter(t => {
-            // STRICT: Only show transactions that explicitly match the cashier's branch
-            const matches = t.branchId === cashierBranch
-            if (!t.branchId) {
-              console.log(`⚠️ Transaction ${t.id} has NO branchId - excluding from cashier view`)
-            }
-            return matches
-          })
-          console.log(`👤 Cashier ${currentUser.name} viewing ${filteredTransactions.length} transactions from branch ${cashierBranch}`)
-          console.log(`   Total transactions: ${allTransactions.length}, Unassigned: ${allTransactions.filter(t => !t.branchId).length}`)
+          filteredTransactions = allTransactions.filter(t => t.branchId === cashierBranch);
         }
       } else if (currentUser.role === 'admin') {
-        // Admin can filter by branch
         if (selectedBranch) {
-          filteredTransactions = allTransactions.filter(t => t.branchId === selectedBranch)
-          console.log(`👨‍💼 Admin viewing ${filteredTransactions.length} transactions from branch ${selectedBranch}`)
+          filteredTransactions = allTransactions.filter(t => t.branchId === selectedBranch);
         }
-        
-        // Further filter by cashier if selected
         if (selectedCashier) {
-          filteredTransactions = filteredTransactions.filter(t => t.userId === selectedCashier)
-          console.log(`👨‍💼 Admin viewing ${filteredTransactions.length} transactions from cashier ${selectedCashier}`)
+          filteredTransactions = filteredTransactions.filter(t => t.userId === selectedCashier);
         }
-        
-        // Update cashiers list for the selected branch
-        const branchCashiers = selectedBranch 
-          ? users.filter(u => u.role === 'cashier' && u.branchId === selectedBranch)
-          : users.filter(u => u.role === 'cashier')
-        setCashiers(branchCashiers)
-        
-        // Reset selected cashier if not in filtered list
-        if (selectedCashier && !branchCashiers.some(c => c.id === selectedCashier)) {
-          setSelectedCashier('')
+        // TODO: Update cashiers list with a real-time users listener if needed
+        setCashiers([]);
+        if (selectedCashier && ![].some(c => c.id === selectedCashier)) {
+          setSelectedCashier('');
         }
       }
-      
-      // Sort by timestamp descending (newest first)
-      // Shows all transactions regardless of payment status (completed, pending, or cancelled)
-      const sortedTransactions = filteredTransactions
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-      
-      setTransactions(sortedTransactions)
-    } catch (error) {
-      console.error('Error loading transactions:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
+      const sortedTransactions = filteredTransactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      setTransactions(sortedTransactions);
+      setLoading(false);
+    });
+    return () => { if (unsub) unsub(); };
+  }, [currentUser, selectedBranch, selectedCashier]);
 
   const handleCancelTransaction = async (transaction) => {
     try {

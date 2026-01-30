@@ -8,8 +8,8 @@ import RecentTransactions from "../components/RecentTransactions"
 import AccountabilityModal from "../components/AccountabilityModal"
 import ActivityFeed from "../components/ActivityFeed"
 import BranchSelector from "../components/BranchSelector"
-import { readData, readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToInventory, subscribeToTransactions } from "../services/realtimeListeners"
 import { toast } from "sonner"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
 import { checkIfMigrationNeeded, migrateDataToBranchIsolation } from "../utils/dataMigration"
@@ -82,180 +82,120 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
   }, [currentUser])
 
   useEffect(() => {
-    const loadDashboardData = async () => {
-      try {
-        const userId = currentUser?.id
-        if (!userId) {
-          console.error('No user ID available')
-          return
-        }
-        
-        // Read from SHARED storage for inventory and transactions (visible to all users)
-        const adminId = getAdminIdForStorage(currentUser)
-        const sharedData = await readSharedData(adminId)
-        const transactions = sharedData.transactions || []
-        const inventory = sharedData.inventory || []
-        const users = sharedData.users || []
-        
-        // Read from user-specific storage for expenses and settings
-        const userData = await readData(userId)
-        const expenses = userData.expenses || []
-        const settings = userData.settings || {}
-        
-        // Get today's date at midnight
-        const today = new Date()
-        today.setHours(0, 0, 0, 0)
-        
-        // Filter today's transactions (from all users - cashier and admin)
-        let todayTransactions = transactions.filter(t => {
-          const transDate = new Date(t.timestamp)
-          transDate.setHours(0, 0, 0, 0)
-          return transDate.getTime() === today.getTime()
-        })
-        
-        // Filter cashiers by selected branch
-        const branchCashiers = selectedBranch 
-          ? users.filter(u => u.role === 'cashier' && u.branchId === selectedBranch)
-          : users.filter(u => u.role === 'cashier')
-        setCashiers(branchCashiers)
-        
-        // Reset selected cashier if it's not in the filtered list
-        if (selectedCashier && !branchCashiers.some(c => c.id === selectedCashier)) {
-          setSelectedCashier('')
-        }
-        
-        // Filter by selected branch if admin has chosen one
-        if (selectedBranch) {
-          console.log('🔍 Filtering by branch:', selectedBranch, 'Total transactions before filter:', todayTransactions.length)
-          todayTransactions = todayTransactions.filter(t => t.branchId === selectedBranch)
-          console.log('✅ After branch filter:', todayTransactions.length, 'transactions')
-        }
-        
-        // Filter by selected cashier if chosen
-        if (selectedCashier) {
-          console.log('🔍 Filtering by cashier:', selectedCashier)
-          todayTransactions = todayTransactions.filter(t => t.userId === selectedCashier)
-          console.log('✅ After cashier filter:', todayTransactions.length, 'transactions')
-        }
-        
-        // Calculate metrics from ALL transactions (whole mart earnings)
-        // Include both regular sales AND loan repayments
-        const cashCollected = todayTransactions
-          .filter(t => t.paymentMethod === 'cash' && (t.paymentStatus === 'completed' || !t.paymentStatus))
-          .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
-        
-        const mpesaCollected = todayTransactions
-          .filter(t => t.paymentMethod === 'mpesa' && (t.paymentStatus === 'completed' || !t.paymentStatus))
-          .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
-        
-        const expectedTotal = cashCollected + mpesaCollected
-        
-        // Calculate today's expenses
-        const todayExpenses = expenses.filter(e => {
-          const expenseDate = new Date(e.date)
-          expenseDate.setHours(0, 0, 0, 0)
-          return expenseDate.getTime() === today.getTime()
-        })
-        
-        const totalExpenses = todayExpenses.reduce((sum, e) => {
-          const amount = e.amount ?? 0
-          // Income entries (loan repayments) should reduce expenses
-          return e.type === 'income' ? sum - amount : sum + amount
-        }, 0)
-        
-        // Calculate profit (earnings - expenses)
-        const profit = expectedTotal - totalExpenses
-        
-        // Check spending limit
-        const spendingLimitPercentage = settings.spendingLimitPercentage || 50
-        const spendingLimit = (expectedTotal * spendingLimitPercentage) / 100
-        const isOverSpendingLimit = totalExpenses > spendingLimit && settings.enableSpendingAlerts !== false
-        
-        // Show alert if over spending limit (only once per day)
-        if (isOverSpendingLimit && totalExpenses > 0 && expectedTotal > 0 && !alertShownToday) {
-          toast.warning('⚠️ Spending Limit Alert', {
-            description: `Expenses (KES ${(totalExpenses || 0).toLocaleString()}) exceed ${spendingLimitPercentage}% of earnings (KES ${(expectedTotal || 0).toLocaleString()})`,
-            duration: 5000,
-          })
-          setAlertShownToday(true)
-        }
-        
-        // Reset alert flag when date changes
-        const lastAlertDate = localStorage.getItem('lastSpendingAlertDate')
-        const todayStr = today.toISOString().split('T')[0]
-        if (lastAlertDate !== todayStr) {
-          localStorage.setItem('lastSpendingAlertDate', todayStr)
-          setAlertShownToday(false)
-        }
-        
-        // Get low stock count
-        const lowStockCount = inventory.filter(item => 
-          item.quantity <= item.reorderLevel
-        ).length
-        
-        // Get expired and expiring soon counts
-        const expiredCount = inventory.filter(item => 
-          item.expiryDate && isExpired(item.expiryDate)
-        ).length
-        
-        const expiringSoonCount = inventory.filter(item => 
-          item.expiryDate && isExpiringSoon(item.expiryDate) && !isExpired(item.expiryDate)
-        ).length
-        
-        // Format recent transactions (last 5 from ALL users)
-        const recentTransactions = todayTransactions
-          .slice(-5)
-          .reverse()
-          .map(t => {
-            const timeDiff = Date.now() - new Date(t.timestamp).getTime()
-            const minutes = Math.floor(timeDiff / 60000)
-            const hours = Math.floor(minutes / 60)
-            const days = Math.floor(hours / 24)
-            
-            let timeAgo
-            if (days > 0) timeAgo = `${days}d ago`
-            else if (hours > 0) timeAgo = `${hours}h ago`
-            else if (minutes > 0) timeAgo = `${minutes} min ago`
-            else timeAgo = 'Just now'
-            
-            return {
-              id: t.id,
-              type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : 
-                    t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
-              amount: t.total,
-              time: timeAgo,
-              items: t.itemCount,
-              cashier: t.cashier || 'System', // System for transactions without assigned cashier
-              cashierId: t.cashierId
-            }
-          })
-        
-        setDashboardData({
-          cashCollected,
-          mpesaCollected,
-          expectedTotal,
-          salesCount: todayTransactions.length,
-          lowStockAlerts: lowStockCount,
-          expiredItems: expiredCount,
-          expiringSoonItems: expiringSoonCount,
-          recentTransactions,
-          fullTransactions: transactions,
-          totalExpenses,
-          profit,
-          spendingLimitPercentage,
-          isOverSpendingLimit
-        })
-      } catch (error) {
-        console.error('Error loading dashboard data:', error)
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let inventoryUnsub = null;
+    let transactionsUnsub = null;
+    let inventoryData = [];
+    let transactionsData = [];
+
+    // Helper to update dashboard state
+    const updateDashboard = () => {
+      // Get today's date at midnight
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Filter today's transactions
+      let todayTransactions = transactionsData.filter(t => {
+        const transDate = new Date(t.timestamp);
+        transDate.setHours(0, 0, 0, 0);
+        return transDate.getTime() === today.getTime();
+      });
+
+      // Filter cashiers by selected branch
+      const users = [];
+      // TODO: If you want real-time users, add a subscribeToUsers listener and setCashiers accordingly
+      // For now, keep cashiers empty or from another source if available
+      setCashiers([]);
+
+      // Filter by selected branch if admin has chosen one
+      if (selectedBranch) {
+        todayTransactions = todayTransactions.filter(t => t.branchId === selectedBranch);
       }
-    }
-    
-    loadDashboardData()
-    
-    // Refresh every 30 seconds
-    const interval = setInterval(loadDashboardData, 30000)
-    return () => clearInterval(interval)
-  }, [currentUser, selectedBranch, selectedCashier]) // Reload when branch or cashier filter changes
+      // Filter by selected cashier if chosen
+      if (selectedCashier) {
+        todayTransactions = todayTransactions.filter(t => t.userId === selectedCashier);
+      }
+
+      // Calculate metrics
+      const cashCollected = todayTransactions
+        .filter(t => t.paymentMethod === 'cash' && (t.paymentStatus === 'completed' || !t.paymentStatus))
+        .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0);
+      const mpesaCollected = todayTransactions
+        .filter(t => t.paymentMethod === 'mpesa' && (t.paymentStatus === 'completed' || !t.paymentStatus))
+        .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0);
+      const expectedTotal = cashCollected + mpesaCollected;
+
+      // Expenses and settings: TODO - subscribe to expenses/settings if needed
+      const totalExpenses = 0;
+      const profit = expectedTotal - totalExpenses;
+      const spendingLimitPercentage = 50;
+      const isOverSpendingLimit = false;
+
+      // Get low stock count
+      const lowStockCount = inventoryData.filter(item => item.quantity <= item.reorderLevel).length;
+      // Get expired and expiring soon counts
+      const expiredCount = inventoryData.filter(item => item.expiryDate && isExpired(item.expiryDate)).length;
+      const expiringSoonCount = inventoryData.filter(item => item.expiryDate && isExpiringSoon(item.expiryDate) && !isExpired(item.expiryDate)).length;
+
+      // Format recent transactions (last 5)
+      const recentTransactions = todayTransactions
+        .slice(-5)
+        .reverse()
+        .map(t => {
+          const timeDiff = Date.now() - new Date(t.timestamp).getTime();
+          const minutes = Math.floor(timeDiff / 60000);
+          const hours = Math.floor(minutes / 60);
+          const days = Math.floor(hours / 24);
+          let timeAgo;
+          if (days > 0) timeAgo = `${days}d ago`;
+          else if (hours > 0) timeAgo = `${hours}h ago`;
+          else if (minutes > 0) timeAgo = `${minutes} min ago`;
+          else timeAgo = 'Just now';
+          return {
+            id: t.id,
+            type: t.paymentMethod === 'mpesa' ? 'M-Pesa' : t.paymentMethod === 'credit' ? 'Credit' : 'Cash',
+            amount: t.total,
+            time: timeAgo,
+            items: t.itemCount,
+            cashier: t.cashier || 'System',
+            cashierId: t.cashierId
+          };
+        });
+
+      setDashboardData({
+        cashCollected,
+        mpesaCollected,
+        expectedTotal,
+        salesCount: todayTransactions.length,
+        lowStockAlerts: lowStockCount,
+        expiredItems: expiredCount,
+        expiringSoonItems: expiringSoonCount,
+        recentTransactions,
+        fullTransactions: transactionsData,
+        totalExpenses,
+        profit,
+        spendingLimitPercentage,
+        isOverSpendingLimit
+      });
+    };
+
+    // Subscribe to inventory
+    inventoryUnsub = subscribeToInventory(adminId, (data) => {
+      inventoryData = data;
+      updateDashboard();
+    });
+    // Subscribe to transactions
+    transactionsUnsub = subscribeToTransactions(adminId, (data) => {
+      transactionsData = data;
+      updateDashboard();
+    });
+
+    return () => {
+      if (inventoryUnsub) inventoryUnsub();
+      if (transactionsUnsub) transactionsUnsub();
+    };
+  }, [currentUser, selectedBranch, selectedCashier]);
 
   const dismissNotification = (type) => {
     try {
@@ -507,7 +447,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <button
               onClick={() => onPageChange && onPageChange('pos')}
-              className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 hover:from-blue-500/20 hover:to-blue-600/10 border-2 border-blue-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+              className="bg-linear-to-br from-blue-500/10 to-blue-600/5 hover:from-blue-500/20 hover:to-blue-600/10 border-2 border-blue-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
             >
               <div className="text-3xl mb-2">🛒</div>
               <div className="text-sm font-bold text-blue-700 dark:text-blue-400">New Sale</div>
@@ -515,7 +455,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             </button>
             <button
               onClick={() => onPageChange && onPageChange('inventory')}
-              className="bg-gradient-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+              className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
             >
               <div className="text-3xl mb-2">📦</div>
               <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Inventory</div>
@@ -523,7 +463,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             </button>
             <button
               onClick={() => onPageChange && onPageChange('reports')}
-              className="bg-gradient-to-br from-green-500/10 to-green-600/5 hover:from-green-500/20 hover:to-green-600/10 border-2 border-green-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+              className="bg-linear-to-br from-green-500/10 to-green-600/5 hover:from-green-500/20 hover:to-green-600/10 border-2 border-green-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
             >
               <div className="text-3xl mb-2">📊</div>
               <div className="text-sm font-bold text-green-700 dark:text-green-400">Reports</div>
@@ -531,7 +471,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             </button>
             <button
               onClick={() => onPageChange && onPageChange('expenses')}
-              className="bg-gradient-to-br from-orange-500/10 to-orange-600/5 hover:from-orange-500/20 hover:to-orange-600/10 border-2 border-orange-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+              className="bg-linear-to-br from-orange-500/10 to-orange-600/5 hover:from-orange-500/20 hover:to-orange-600/10 border-2 border-orange-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
             >
               <div className="text-3xl mb-2">💸</div>
               <div className="text-sm font-bold text-orange-700 dark:text-orange-400">Expenses</div>

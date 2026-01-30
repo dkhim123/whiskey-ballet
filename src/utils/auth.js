@@ -4,6 +4,9 @@
  */
 
 import bcrypt from 'bcryptjs'
+import { writeUserToRealtimeDB, readEntityFromRealtimeDB } from './firebaseRealtime'
+import { auth } from '../config/firebase'
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
 
 const USERS_STORAGE_KEY = 'pos-users-db'
 const SALT_ROUNDS = 10
@@ -237,77 +240,56 @@ const resetLoginAttempts = (email) => {
  */
 export const authenticateUser = async (email, password) => {
   try {
-    // Check if account is locked
-    const lockStatus = isAccountLockedOut(email)
-    if (lockStatus.locked) {
-      return {
-        success: false,
-        error: `Account temporarily locked. Try again in ${lockStatus.remainingTime} minutes.`,
-        isLockedOut: true
-      }
-    }
-    
     // Validate inputs
     if (!email || !password) {
       return { success: false, error: 'Email and password are required' }
     }
-    
-    // Sanitize email
     const sanitizedEmail = email.trim().toLowerCase()
-    
     if (!validateEmail(sanitizedEmail)) {
       return { success: false, error: 'Invalid email format' }
     }
-    
-    // Get users from storage
-    const users = await getUsersFromStorage()
-    
-    // Find user by email
-    const user = users.find(u => u.email === sanitizedEmail)
-    
-    if (!user) {
-      // Record failed attempt (don't reveal if user exists)
-      const attemptResult = recordFailedAttempt(email)
-      return {
-        success: false,
-        error: 'Invalid email or password',
-        attemptsRemaining: attemptResult.attemptsRemaining
+    // Try Firebase Auth first
+    let userCredential
+    try {
+      userCredential = await signInWithEmailAndPassword(auth, sanitizedEmail, password)
+    } catch (firebaseError) {
+      // Firebase Auth failed
+      let errorMsg = 'Invalid email or password'
+      if (firebaseError.code === 'auth/user-disabled') errorMsg = 'Account is disabled.'
+      if (firebaseError.code === 'auth/too-many-requests') errorMsg = 'Too many failed attempts. Try again later.'
+      return { success: false, error: errorMsg }
+    }
+    // Fetch user profile from Firebase Realtime DB (users/{uid})
+    const user = userCredential.user
+    let userProfile = null
+    try {
+      userProfile = await readEntityFromRealtimeDB('users', user.uid)
+    } catch (e) {
+      // ignore
+    }
+    // Fallback to localStorage if not found in DB (legacy)
+    if (!userProfile) {
+      try {
+        const usersRaw = localStorage.getItem('pos-users-db')
+        if (usersRaw) {
+          const users = JSON.parse(usersRaw)
+          userProfile = users.find(u => u.email.toLowerCase() === sanitizedEmail)
+        }
+      } catch (e) {
+        // ignore
       }
     }
-    
-    // Check if user is active
-    if (!user.isActive) {
-      return { success: false, error: 'Account is deactivated. Contact administrator.' }
-    }
-    
-    // Verify password
-    const isPasswordValid = await verifyPassword(password, user.passwordHash)
-    
-    if (!isPasswordValid) {
-      const attemptResult = recordFailedAttempt(email)
-      return {
-        success: false,
-        error: 'Invalid email or password',
-        attemptsRemaining: attemptResult.attemptsRemaining,
-        isLockedOut: attemptResult.isLockedOut
-      }
-    }
-    
-    // Successful authentication - reset attempts
-    resetLoginAttempts(email)
-    
-    // Return user data (without password hash) - INCLUDE branchId!
     return {
       success: true,
       user: {
-        id: user.id,
+        id: userProfile?.id || user.uid,
         email: user.email,
-        role: user.role,
-        name: user.name,
-        createdBy: user.createdBy,
-        branchId: user.branchId, // ⭐ CRITICAL: Include branchId for branch isolation
-        adminId: user.adminId || user.createdBy // For accessing shared data
-      }
+        role: userProfile?.role || 'cashier',
+        name: userProfile?.name || user.displayName || '',
+        createdBy: userProfile?.createdBy || null,
+        branchId: userProfile?.branchId || null
+      },
+      firebaseAuth: true
     }
   } catch (error) {
     console.error('Error authenticating user:', error)
@@ -329,26 +311,26 @@ export const registerUser = async (name, email, password, role, createdBy = null
     const sanitizedName = name?.trim()
     const sanitizedEmail = email?.trim().toLowerCase()
     const sanitizedRole = role?.toLowerCase()
-    
+
     if (!sanitizedName || !sanitizedEmail || !password || !sanitizedRole) {
       return { success: false, error: 'All fields are required' }
     }
-    
+
     if (!validateEmail(sanitizedEmail)) {
       return { success: false, error: 'Please enter a valid email address' }
     }
-    
+
     // Validate password strength
     const passwordErrors = validatePasswordStrength(password)
     if (passwordErrors.length > 0) {
       return { success: false, error: passwordErrors[0] }
     }
-    
+
     // Validate role (case-insensitive)
     if (!['admin', 'cashier', 'manager'].includes(sanitizedRole)) {
       return { success: false, error: 'Invalid role' }
     }
-    
+
     // Security: Prevent cashier/manager self-registration
     // Cashier and manager accounts can only be created by admins
     // Admin accounts can self-register (no createdBy means self-registration)
@@ -356,19 +338,26 @@ export const registerUser = async (name, email, password, role, createdBy = null
     if ((sanitizedRole === 'cashier' || sanitizedRole === 'manager') && !createdBy) {
       return { success: false, error: 'Cashier and manager accounts can only be created by administrators' }
     }
-    
+
     // Check if user already exists
     if (users.find(u => u.email === sanitizedEmail)) {
       return { success: false, error: 'User with this email already exists' }
     }
-    
-    // Hash password
+
+    // Create user in Firebase Auth
+    let authUser = null
+    try {
+      authUser = await createUserWithEmailAndPassword(auth, sanitizedEmail, password)
+    } catch (authError) {
+      if (authError.code === 'auth/email-already-in-use') {
+        return { success: false, error: 'User with this email already exists in Firebase Auth' }
+      }
+      return { success: false, error: 'Failed to create user in Firebase Authentication.' }
+    }
+
+    // Optionally, add user to local storage for offline reference (not for login)
     const passwordHash = await hashPassword(password)
-    
-    // Generate new user ID (safe even with empty array)
     const newUserId = users.length > 0 ? Math.max(...users.map(u => u.id)) + 1 : 1
-    
-    // Create new user
     const newUser = {
       id: newUserId,
       email: sanitizedEmail,
@@ -377,24 +366,31 @@ export const registerUser = async (name, email, password, role, createdBy = null
       name: sanitizedName,
       createdAt: new Date().toISOString(),
       isActive: true,
-      createdBy: createdBy, // Track which admin created this user
-      branchId: branchId || null // Assign branch for cashiers
+      createdBy: createdBy,
+      branchId: branchId || null
     }
-    
-    // Add user to storage
     users.push(newUser)
     await saveUsersToStorage(users)
-    
+
+    // Also write user to Firebase Realtime Database if needed
+    try {
+      await writeUserToRealtimeDB(newUser)
+    } catch (dbError) {
+      console.error('Error writing user to Realtime DB:', dbError)
+      return { success: false, error: 'Failed to save user to database. Check your Firebase rules and network.' }
+    }
+
     return {
       success: true,
       user: {
-        id: newUser.id,
-        email: newUser.email,
-        role: newUser.role,
-        name: newUser.name,
-        createdBy: newUser.createdBy,
-        branchId: newUser.branchId // ⭐ Include branchId in response
-      }
+        id: newUserId,
+        email: sanitizedEmail,
+        role: sanitizedRole,
+        name: sanitizedName,
+        createdBy: createdBy,
+        branchId: branchId || null
+      },
+      firebaseAuth: !!authUser
     }
   } catch (error) {
     console.error('Error registering user:', error)

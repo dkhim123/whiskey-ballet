@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
-import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToSuppliers } from "../services/realtimeListeners"
+import { subscribeToPurchaseOrders, subscribeToSupplierPayments } from "../services/realtimeExtraListeners"
+// TODO: Implement subscribeToSupplierPayments and subscribeToPurchaseOrders for full real-time
 
 export default function SupplierPaymentsPage({ currentUser }) {
   const [payments, setPayments] = useState([])
@@ -13,25 +15,28 @@ export default function SupplierPaymentsPage({ currentUser }) {
   const [selectedSupplier, setSelectedSupplier] = useState(null)
   const [filterSupplier, setFilterSupplier] = useState("all")
 
-  // Load data from storage
+  // Real-time Firestore listeners for suppliers, supplierPayments, and purchaseOrders
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const userId = currentUser?.id
-        if (!userId) return
-
-        const adminId = getAdminIdForStorage(currentUser)
-        const sharedData = await readSharedData(adminId)
-        setPayments(sharedData.supplierPayments || [])
-        setSuppliers(sharedData.suppliers || [])
-        setPurchaseOrders(sharedData.purchaseOrders || [])
-      } catch (error) {
-        console.error("Error loading data:", error)
-      }
-    }
-
-    loadData()
-  }, [currentUser])
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsubSuppliers = null;
+    let unsubSupplierPayments = null;
+    let unsubPurchaseOrders = null;
+    unsubSuppliers = subscribeToSuppliers(adminId, (data) => {
+      setSuppliers(data);
+    });
+    unsubSupplierPayments = subscribeToSupplierPayments(adminId, (data) => {
+      setPayments(data);
+    });
+    unsubPurchaseOrders = subscribeToPurchaseOrders(adminId, (data) => {
+      setPurchaseOrders(data);
+    });
+    return () => {
+      if (unsubSuppliers) unsubSuppliers();
+      if (unsubSupplierPayments) unsubSupplierPayments();
+      if (unsubPurchaseOrders) unsubPurchaseOrders();
+    };
+  }, [currentUser]);
 
   // Calculate supplier balances
   const calculateSupplierBalance = (supplierId) => {

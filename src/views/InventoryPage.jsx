@@ -12,8 +12,8 @@ import StockCountModal from "../components/StockCountModal"
 import InventoryCSVUpload from "../components/InventoryCSVUpload"
 import Pagination from "../components/Pagination"
 import BranchSelector from "../components/BranchSelector"
-import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToInventory } from "../services/realtimeListeners"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
 import { useDebounce } from "../hooks/useDebounce"
 
@@ -227,14 +227,33 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     }
   }
 
-  // Load inventory on mount and set up auto-refresh
+  // Real-time Firestore inventory listener
   useEffect(() => {
-    loadInventory()
-    
-    // Refresh every 5 seconds for real-time sync
-    const interval = setInterval(loadInventory, 5000)
-    return () => clearInterval(interval)
-  }, [currentUser?.id, selectedBranch]) // Re-load when branch changes
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsub = null;
+    unsub = subscribeToInventory(adminId, (data) => {
+      // Store all inventory for admin
+      setAllInventory(data);
+      // Filter by branch for cashiers, or by selected branch for admin
+      let filteredInventory = data;
+      if (currentUser.role === 'cashier') {
+        const cashierBranch = currentUser.branchId;
+        if (!cashierBranch) {
+          filteredInventory = [];
+        } else {
+          filteredInventory = data.filter(item => item.branchId === cashierBranch);
+        }
+      } else if (currentUser.role === 'admin' && selectedBranch) {
+        filteredInventory = data.filter(item => item.branchId === selectedBranch);
+      }
+      setInventory(filteredInventory);
+      if (onInventoryChange) {
+        onInventoryChange(filteredInventory);
+      }
+    });
+    return () => { if (unsub) unsub(); };
+  }, [currentUser?.id, selectedBranch]);
 
   // Debounce search for better performance
   const debouncedSearch = useDebounce(searchTerm, 300)
@@ -565,7 +584,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
           <button
             key="stock-count"
             onClick={() => setShowStockCountModal(true)}
-            className="group relative px-5 py-3.5 bg-gradient-to-b from-white/90 to-white/70 dark:from-slate-800/90 dark:to-slate-800/70 backdrop-blur-md border border-slate-200/50 dark:border-slate-700/50 rounded-xl font-semibold text-slate-700 dark:text-slate-200 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
+            className="group relative px-5 py-3.5 bg-linear-to-b from-white/90 to-white/70 dark:from-slate-800/90 dark:to-slate-800/70 backdrop-blur-md border border-slate-200/50 dark:border-slate-700/50 rounded-xl font-semibold text-slate-700 dark:text-slate-200 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
           >
             <div className="flex items-center gap-2.5">
               <Package className="w-5 h-5" />
@@ -574,12 +593,12 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
                 <div className="text-xs opacity-70 font-normal">Verify inventory</div>
               </div>
             </div>
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-500/0 via-blue-500/5 to-blue-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            <div className="absolute inset-0 rounded-xl bg-linear-to-r from-blue-500/0 via-blue-500/5 to-blue-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
           <button
             key="export"
             onClick={exportToCSV}
-            className="group relative px-5 py-3.5 bg-gradient-to-b from-white/90 to-white/70 dark:from-slate-800/90 dark:to-slate-800/70 backdrop-blur-md border border-slate-200/50 dark:border-slate-700/50 rounded-xl font-semibold text-slate-700 dark:text-slate-200 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
+            className="group relative px-5 py-3.5 bg-linear-to-b from-white/90 to-white/70 dark:from-slate-800/90 dark:to-slate-800/70 backdrop-blur-md border border-slate-200/50 dark:border-slate-700/50 rounded-xl font-semibold text-slate-700 dark:text-slate-200 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
           >
             <div className="flex items-center gap-2.5">
               <TableIcon className="w-5 h-5" />
@@ -588,12 +607,12 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
                 <div className="text-xs opacity-70 font-normal">Download data</div>
               </div>
             </div>
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-green-500/0 via-green-500/5 to-green-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            <div className="absolute inset-0 rounded-xl bg-linear-to-r from-green-500/0 via-green-500/5 to-green-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
           <button
             key="csv-upload"
             onClick={() => setShowCSVUpload(true)}
-            className="group relative px-5 py-3.5 bg-gradient-to-b from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 border border-blue-500/50 rounded-xl font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
+            className="group relative px-5 py-3.5 bg-linear-to-b from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 border border-blue-500/50 rounded-xl font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
           >
             <div className="flex items-center gap-2.5">
               <TableIcon className="w-5 h-5" />
@@ -602,12 +621,12 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
                 <div className="text-xs opacity-90 font-normal">Bulk upload</div>
               </div>
             </div>
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            <div className="absolute inset-0 rounded-xl bg-linear-to-r from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
           <button
             key="add"
             onClick={() => setShowAddModal(true)}
-            className="group relative px-5 py-3.5 bg-gradient-to-b from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 border border-blue-500/50 rounded-xl font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
+            className="group relative px-5 py-3.5 bg-linear-to-b from-blue-600 to-blue-700 dark:from-blue-500 dark:to-blue-600 border border-blue-500/50 rounded-xl font-semibold text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.03] hover:-translate-y-0.5"
           >
             <div className="flex items-center gap-2.5">
               <Plus className="w-5 h-5" />
@@ -616,7 +635,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
                 <div className="text-xs opacity-90 font-normal">Create new item</div>
               </div>
             </div>
-            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+            <div className="absolute inset-0 rounded-xl bg-linear-to-r from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
         ]}
       />

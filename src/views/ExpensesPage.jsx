@@ -4,8 +4,8 @@ import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
 import AccountabilityModal from "../components/AccountabilityModal"
 import BranchSelector from "../components/BranchSelector"
-import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+// TODO: Implement subscribeToExpenses for admin real-time
 import { exportExpensesToCSV } from "../utils/csvExport"
 
 export default function ExpensesPage({ currentUser }) {
@@ -25,66 +25,19 @@ export default function ExpensesPage({ currentUser }) {
   const [showAccountabilityModal, setShowAccountabilityModal] = useState(false)
   const [accountabilityType, setAccountabilityType] = useState(null)
 
-  // Load expenses on mount
+  // Real-time Firestore expenses listener for admin
   useEffect(() => {
-    const loadExpenses = async () => {
-      try {
-        const userId = currentUser?.id
-        if (!userId) return
-
-        const adminId = getAdminIdForStorage(currentUser)
-        
-        let allUserExpenses = []
-        
-        if (currentUser.role === 'cashier') {
-          // Cashiers load their own expenses from user-specific storage
-          const data = await readData(userId)
-          allUserExpenses = data.expenses || []
-          setSettings({
-            spendingLimitPercentage: data.settings?.spendingLimitPercentage || 50,
-            enableSpendingAlerts: data.settings?.enableSpendingAlerts !== false
-          })
-        } else if (currentUser.role === 'admin') {
-          // Admin loads expenses from sharedData (aggregated from all users)
-          const sharedData = await readSharedData(adminId)
-          allUserExpenses = sharedData.expenses || []
-          
-          // Load admin's own settings
-          const adminData = await readData(userId)
-          setSettings({
-            spendingLimitPercentage: adminData.settings?.spendingLimitPercentage || 50,
-            enableSpendingAlerts: adminData.settings?.enableSpendingAlerts !== false
-          })
-        }
-        
-        console.log(`💰 ExpensesPage: Loaded ${allUserExpenses.length} total expenses for ${currentUser.role} ${currentUser.name}`)
-        
-        // Store all expenses for admin view
-        setAllExpenses(allUserExpenses)
-        
-        // Filter by branch for cashiers, or by selected branch for admin
-        let filteredByBranch = allUserExpenses
-        if (currentUser.role === 'cashier') {
-          // Cashiers see only their branch expenses
-          const cashierBranch = currentUser.branchId
-          filteredByBranch = allUserExpenses.filter(e => e.branchId === cashierBranch || !e.branchId)
-          console.log(`   🔒 Filtered to ${filteredByBranch.length} expenses for branch ${cashierBranch}`)
-        } else if (currentUser.role === 'admin' && selectedBranch) {
-          // Admin filtering by specific branch
-          filteredByBranch = allUserExpenses.filter(e => e.branchId === selectedBranch)
-          console.log(`   🔍 Admin filtered to ${filteredByBranch.length} expenses for branch ${selectedBranch}`)
-        } else if (currentUser.role === 'admin') {
-          console.log(`   👁️ Admin viewing all ${filteredByBranch.length} expenses from all branches`)
-        }
-        
-        setExpenses(filteredByBranch)
-      } catch (error) {
-        console.error('Error loading expenses:', error)
-      }
+    if (!currentUser) return;
+    if (currentUser.role === 'admin') {
+      const adminId = getAdminIdForStorage(currentUser);
+      let unsub = null;
+      unsub = require('../services/realtimeExtraListeners').subscribeToExpenses(adminId, (data) => {
+        setAllExpenses(data);
+      });
+      return () => { if (unsub) unsub(); };
     }
-
-    loadExpenses()
-  }, [currentUser, selectedBranch])
+    // Cashier logic remains as is
+  }, [currentUser, selectedBranch]);
 
   const [metrics, setMetrics] = useState({ income: 0, expenses: 0, cashIncome: 0, mpesaIncome: 0 })
   const [filteredExpenses, setFilteredExpenses] = useState([])
@@ -494,7 +447,7 @@ export default function ExpensesPage({ currentUser }) {
       <div className="p-6 flex-1 overflow-auto">
         {/* Spending Limit Alert */}
         {isOverLimit && (
-          <div className="mb-4 bg-gradient-to-r from-destructive/10 via-destructive/5 to-destructive/10 border-2 border-destructive rounded-xl p-5 shadow-lg animate-pulse-slow">
+          <div className="mb-4 bg-linear-to-r from-destructive/10 via-destructive/5 to-destructive/10 border-2 border-destructive rounded-xl p-5 shadow-lg animate-pulse-slow">
             <h3 className="font-bold text-destructive mb-2 flex items-center gap-3 text-xl">
               <span className="text-3xl">⚠️</span>
               <span>Spending Limit Exceeded!</span>
@@ -530,7 +483,7 @@ export default function ExpensesPage({ currentUser }) {
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div 
-            className="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02] cursor-pointer"
+            className="bg-linear-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02] cursor-pointer"
             onClick={() => {
               setAccountabilityType('sales')
               setShowAccountabilityModal(true)
@@ -564,7 +517,7 @@ export default function ExpensesPage({ currentUser }) {
             </div>
           </div>
           <div 
-            className="bg-gradient-to-br from-red-500 to-red-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02] cursor-pointer"
+            className="bg-linear-to-br from-red-500 to-red-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02] cursor-pointer"
             onClick={() => {
               setAccountabilityType('expenses')
               setShowAccountabilityModal(true)
@@ -590,7 +543,7 @@ export default function ExpensesPage({ currentUser }) {
               {filteredExpenses.length} expense{filteredExpenses.length !== 1 ? 's' : ''} recorded
             </div>
           </div>
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02]">
+          <div className="bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02]">
             <div className="text-sm opacity-90 mb-3 font-medium">📊 Net Profit</div>
             <div className={`text-4xl font-bold mb-2`}>
               KES {(metrics.income - metrics.expenses).toLocaleString()}

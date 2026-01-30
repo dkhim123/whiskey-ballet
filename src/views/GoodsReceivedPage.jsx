@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
-import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToGoodsReceivedNotes, subscribeToPurchaseOrders } from "../services/realtimeExtraListeners"
 import { createUserSnapshot, formatReceivedBy, getReceivedByName, getReceivedByRole } from "../utils/userTracking"
 
 export default function GoodsReceivedPage({ currentUser }) {
@@ -32,14 +32,33 @@ export default function GoodsReceivedPage({ currentUser }) {
     }
   }
 
+  // Real-time Firestore suppliers, inventory, goodsReceivedNotes, and purchaseOrders listeners
   useEffect(() => {
-    loadData()
-    
-    // Refresh every 10 seconds to sync changes made by other users (cashiers, managers, admins)
-    // This ensures near real-time visibility of goods received across all user sessions
-    const interval = setInterval(loadData, 10000)
-    return () => clearInterval(interval)
-  }, [currentUser])
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsubSuppliers = null;
+    let unsubInventory = null;
+    let unsubGoodsReceivedNotes = null;
+    let unsubPurchaseOrders = null;
+    unsubSuppliers = subscribeToSuppliers(adminId, (data) => {
+      setSuppliers(data);
+    });
+    unsubInventory = subscribeToInventory(adminId, (data) => {
+      setInventory(data);
+    });
+    unsubGoodsReceivedNotes = subscribeToGoodsReceivedNotes(adminId, (data) => {
+      setGrns(data);
+    });
+    unsubPurchaseOrders = subscribeToPurchaseOrders(adminId, (data) => {
+      setPurchaseOrders(data);
+    });
+    return () => {
+      if (unsubSuppliers) unsubSuppliers();
+      if (unsubInventory) unsubInventory();
+      if (unsubGoodsReceivedNotes) unsubGoodsReceivedNotes();
+      if (unsubPurchaseOrders) unsubPurchaseOrders();
+    };
+  }, [currentUser]);
 
   // Save GRN and update inventory
   const saveGRN = async (newGRN) => {

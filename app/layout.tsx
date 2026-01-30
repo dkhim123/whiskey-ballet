@@ -1,6 +1,5 @@
 import type React from "react"
 import type { Metadata, Viewport } from "next"
-import { Analytics } from "@vercel/analytics/next"
 import { Toaster } from "@/components/ui/sonner"
 import "./globals.css"
 
@@ -57,7 +56,7 @@ export default function RootLayout({
       <body className={`font-sans antialiased`} suppressHydrationWarning>
         {children}
         <Toaster />
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        {/* Analytics removed: Vercel not used */}
       </body>
     </html>
   )

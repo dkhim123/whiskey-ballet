@@ -71,6 +71,7 @@ export function filterInventoryByBranch(inventory, currentUser, selectedBranch =
  * @returns {Array} Filtered transactions
  */
 export function filterTransactionsByBranch(transactions, currentUser, selectedBranch = null, selectedCashier = null) {
+  validateUserBranchAssignment(currentUser);
   if (!transactions || !Array.isArray(transactions)) {
     return []
   }
@@ -272,4 +273,15 @@ export function logUnauthorizedAccess(currentUser, resource, branchId) {
   console.error(`   Attempted Branch: ${branchId}`)
   
   // TODO: Could send this to a security audit log in production
+}
+
+/**
+ * Validate user branch assignment
+ * @param {Object} user - User object
+ * @returns {boolean} True if user has a valid branchId
+ */
+export function validateUserBranchAssignment(user) {
+  if (!user.branchId) {
+    throw new Error(`User ${user.name} does not have a valid branchId assigned.`);
+  }
 }

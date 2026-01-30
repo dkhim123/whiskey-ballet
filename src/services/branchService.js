@@ -1,10 +1,60 @@
 /**
+ * Subscribe to all branches for the current admin (real-time updates)
+ * @param {function} onUpdate - Callback for data updates (array of branches)
+ * @param {function} onError - Callback for errors
+ * @returns {function} Unsubscribe function
+ */
+export function subscribeToBranches(onUpdate, onError) {
+  const adminId = getCurrentAdminId();
+  if (isFirebaseConfigured() && db) {
+    const branchesCol = collection(db, 'organizations', adminId, COLLECTION_NAME);
+    const unsubscribe = onSnapshot(
+      branchesCol,
+      (snapshot) => {
+        const branches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        onUpdate(branches);
+      },
+      (error) => {
+        if (onError) onError(error);
+      }
+    );
+    return unsubscribe;
+  } else {
+    // Fallback: strictly filter by adminId and purge on mismatch
+    (async () => {
+      try {
+        const indexedDb = await getDB();
+        const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
+        const store = tx.objectStore(STORES.BRANCHES);
+        const index = store.index('adminId');
+        const request = index.getAll(adminId);
+        request.onsuccess = () => {
+          const items = request.result || [];
+          const filtered = items.filter(b => b.adminId === adminId && b.isActive);
+          if (items.some(b => b.adminId !== adminId)) {
+            import('../utils/clearLocalData').then(({ default: clearLocalData }) => clearLocalData());
+            onUpdate([]);
+          } else {
+            onUpdate(filtered);
+          }
+        };
+        request.onerror = () => {
+          if (onError) onError(request.error);
+        };
+      } catch (error) {
+        if (onError) onError(error);
+      }
+    })();
+    return () => {}; // no-op unsubscribe
+  }
+}
+/**
  * Branch Service - Manages branch data with hybrid storage (IndexedDB + Firebase)
  * Stores branches locally for offline access and syncs to Firestore for real-time updates
  */
 
 import { db, isFirebaseConfigured } from '../config/firebase';
-import { collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, deleteDoc, query, where, onSnapshot } from 'firebase/firestore';
 import { getDB, STORES } from '../utils/indexedDBStorage';
 
 const STORAGE_KEY = 'pos-branches';
@@ -146,59 +196,68 @@ export async function getAllBranches() {
       getAllRequest.onerror = () => reject(getAllRequest.error);
     });
     
-    console.log('📦 Raw IndexedDB data:', allBranches);
-    
+    // Strict adminId filtering and purge if ghost data found
     const userBranches = allBranches.filter(b => b.adminId === adminId && b.isActive);
-    
-    console.log(`📦 Loaded ${userBranches.length} branches from IndexedDB`);
+    if ((allBranches || []).some(b => b.adminId !== adminId)) {
+      import('../utils/clearLocalData').then(({ default: clearLocalData }) => clearLocalData());
+      return [];
+    }
     return userBranches;
   } catch (error) {
     console.error('Error loading branches from IndexedDB:', error);
     
     // Final fallback to localStorage
     const branches = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    console.log(`📦 Loaded ${branches.length} branches from localStorage`);
+    // ...existing code...
     return branches.filter(b => b.isActive);
   }
 }
 
+
 /**
- * Get a single branch by ID
+ * Subscribe to a single branch by ID (real-time updates)
  * @param {string} branchId - Branch ID
- * @returns {Promise<Object|null>} Branch object or null
+ * @param {function} onUpdate - Callback for data updates
+ * @param {function} onError - Callback for errors
+ * @returns {function} Unsubscribe function
  */
-export async function getBranch(branchId) {
+export function subscribeToBranch(branchId, onUpdate, onError) {
   const adminId = getCurrentAdminId();
-  
-  try {
-    // Try Firebase first
-    if (isFirebaseConfigured() && db) {
-      try {
-        const branchRef = doc(db, 'organizations', adminId, COLLECTION_NAME, branchId);
-        const snapshot = await getDoc(branchRef);
-        
+  if (isFirebaseConfigured() && db) {
+    const branchRef = doc(db, 'organizations', adminId, COLLECTION_NAME, branchId);
+    // Subscribe to real-time updates
+    const unsubscribe = onSnapshot(
+      branchRef,
+      (snapshot) => {
         if (snapshot.exists()) {
-          return { id: snapshot.id, ...snapshot.data() };
+          onUpdate({ id: snapshot.id, ...snapshot.data() });
+        } else {
+          onUpdate(null);
         }
-      } catch (firebaseError) {
-        console.warn('Firebase unavailable, checking local storage:', firebaseError.message);
+      },
+      (error) => {
+        if (onError) onError(error);
       }
-    }
-
-    // Fallback to IndexedDB
-    const indexedDb = await getDB();
-    const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
-    const store = tx.objectStore(STORES.BRANCHES);
-    const branch = await store.get(branchId);
-    
-    if (branch && branch.adminId === adminId) {
-      return branch;
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Error getting branch:', error);
-    return null;
+    );
+    return unsubscribe;
+  } else {
+    // Fallback: immediately call onUpdate with local/IndexedDB data
+    (async () => {
+      try {
+        const indexedDb = await getDB();
+        const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
+        const store = tx.objectStore(STORES.BRANCHES);
+        const branch = await store.get(branchId);
+        if (branch && branch.adminId === adminId) {
+          onUpdate(branch);
+        } else {
+          onUpdate(null);
+        }
+      } catch (error) {
+        if (onError) onError(error);
+      }
+    })();
+    return () => {}; // no-op unsubscribe
   }
 }
 
@@ -209,9 +268,13 @@ export async function getBranch(branchId) {
  * @returns {Promise<Object>} Updated branch object
  */
 export async function updateBranch(branchId, updates) {
+  if (!branchId) {
+    throw new Error('Branch ID is required to update a branch.');
+  }
+
   const adminId = getCurrentAdminId();
   const existingBranch = await getBranch(branchId);
-  
+
   if (!existingBranch) {
     throw new Error('Branch not found');
   }

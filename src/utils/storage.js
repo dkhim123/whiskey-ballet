@@ -43,6 +43,45 @@ export const migrateTransactionsBranchId = async (adminId = null, users = []) =>
     return { success: false, migrated: 0, error: error.message }
   }
 }
+
+/**
+ * Validate and fix branch data for missing/invalid branchId values
+ * @param {string|number} adminId - Admin ID for isolation
+ * @param {Array} users - Array of user objects with id and branchId
+ * @returns {Promise<{success: boolean, validated: number}>}
+ */
+export const validateAndFixBranchData = async (adminId = null, users = []) => {
+  try {
+    const sharedData = await readSharedData(adminId);
+    if (!sharedData.transactions || !Array.isArray(sharedData.transactions)) {
+      return { success: true, validated: 0 };
+    }
+
+    let validatedCount = 0;
+    const updatedTransactions = sharedData.transactions.map(txn => {
+      if (!txn.branchId || txn.branchId === 'NO_BRANCH' || txn.branchId === null) {
+        let branchId = null;
+        if (txn.cashierId && users.length > 0) {
+          const user = users.find(u => u.id === txn.cashierId);
+          branchId = user?.branchId || null;
+        }
+        if (branchId) {
+          validatedCount++;
+          return { ...txn, branchId };
+        }
+      }
+      return txn;
+    });
+
+    // Save updated transactions back to storage
+    await saveSharedData(adminId, { ...sharedData, transactions: updatedTransactions });
+    return { success: true, validated: validatedCount };
+  } catch (error) {
+    console.error('Error validating and fixing branch data:', error);
+    return { success: false, validated: 0 };
+  }
+};
+
 /**
  * Storage utility that works both in web (localStorage/IndexedDB) and Electron (file system)
  * Now supports user-specific data isolation with IndexedDB for large datasets
@@ -906,3 +945,27 @@ export const restoreAllDataByTimeRange = async (adminId, startTimestamp, endTime
     throw error
   }
 }
+
+export const migrateDatabaseIndexes = async () => {
+  try {
+    const db = await getDB();
+
+    // Check and add adminId index to transactions store
+    const transactionsStore = db.transaction(STORES.TRANSACTIONS, 'readwrite').objectStore(STORES.TRANSACTIONS);
+    if (!transactionsStore.indexNames.contains('adminId')) {
+      transactionsStore.createIndex('adminId', 'adminId', { unique: false });
+      console.log('✅ Added adminId index to transactions store');
+    }
+
+    // Check and add adminId index to inventory store
+    const inventoryStore = db.transaction(STORES.INVENTORY, 'readwrite').objectStore(STORES.INVENTORY);
+    if (!inventoryStore.indexNames.contains('adminId')) {
+      inventoryStore.createIndex('adminId', 'adminId', { unique: false });
+      console.log('✅ Added adminId index to inventory store');
+    }
+
+    console.log('✅ Database indexes migration completed successfully');
+  } catch (error) {
+    console.error('❌ Error migrating database indexes:', error);
+  }
+};

@@ -27,6 +27,7 @@ import AccountHealthCheck from "./components/AccountHealthCheck"
 import { ThemeProvider } from "./components/ThemeProvider"
 import { readData, writeData, getStorageMode, readSharedData, writeSharedData, migrateTransactionsPaymentStatus } from "./utils/storage"
 import { saveSession, loadSession, updateSessionPage, clearSession } from "./utils/session"
+import { clearLocalDataIfSafe } from "./utils/clearLocalData"
 import { initializeDefaultUsers, registerUser, getAdminIdForStorage } from "./utils/auth"
 import { calculateVAT, calculateProfit, calculateMargin } from "./utils/pricing"
 // Initialize Firebase (cloud database for real-time sync and backup)
@@ -196,13 +197,18 @@ export default function App() {
     }
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setCurrentPage("login")
     setUserRole(null)
     setCurrentUser(null)
-    
     // Clear session using utility
     clearSession()
+    // Purge all local data if safe (no pending sync)
+    try {
+      await clearLocalDataIfSafe()
+    } catch (e) {
+      console.warn('Error clearing local data on logout:', e)
+    }
   }
 
   // No loading screen - go straight to login or main app

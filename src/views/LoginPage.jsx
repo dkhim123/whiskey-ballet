@@ -4,7 +4,7 @@ import LoginForm from "../components/LoginForm"
 
 export default function LoginPage({ onLogin }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#2C1810] via-[#1a0f0a] to-[#2C1810] dark:from-gray-900 dark:via-gray-950 dark:to-gray-900 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-linear-to-br from-[#2C1810] via-[#1a0f0a] to-[#2C1810] dark:from-gray-900 dark:via-gray-950 dark:to-gray-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-[#F5F1E8] dark:bg-gray-800 backdrop-blur-sm rounded-2xl shadow-2xl p-8 border-2 border-[#D4AF37]/30 dark:border-[#D4AF37]/50">
           <div className="text-center mb-8">

@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
-import { readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToSuppliers } from "../services/realtimeListeners"
 
 export default function SuppliersPage({ currentUser }) {
   const [suppliers, setSuppliers] = useState([])
@@ -12,23 +12,16 @@ export default function SuppliersPage({ currentUser }) {
   const [selectedSupplier, setSelectedSupplier] = useState(null)
   const [searchTerm, setSearchTerm] = useState("")
 
-  // Load suppliers from storage
+  // Real-time Firestore suppliers listener
   useEffect(() => {
-    const loadSuppliers = async () => {
-      try {
-        const userId = currentUser?.id
-        if (!userId) return
-
-        const adminId = getAdminIdForStorage(currentUser)
-        const sharedData = await readSharedData(adminId)
-        setSuppliers(sharedData.suppliers || [])
-      } catch (error) {
-        console.error("Error loading suppliers:", error)
-      }
-    }
-
-    loadSuppliers()
-  }, [currentUser])
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsub = null;
+    unsub = subscribeToSuppliers(adminId, (data) => {
+      setSuppliers(data);
+    });
+    return () => { if (unsub) unsub(); };
+  }, [currentUser]);
 
   // Save suppliers to storage
   const saveSuppliers = async (updatedSuppliers) => {

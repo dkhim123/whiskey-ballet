@@ -2,9 +2,9 @@
 
 import { useState } from "react"
 import { X, UserPlus, Eye, EyeOff, CheckCircle } from "lucide-react"
-import { registerUser, validateEmail } from "../utils/auth"
+import { registerUser, authenticateUser, validateEmail } from "../utils/auth"
 
-export default function SignUpModal({ onClose }) {
+export default function SignUpModal({ onClose, onSignUpSuccess }) {
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -17,6 +17,7 @@ export default function SignUpModal({ onClose }) {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [autoLoginError, setAutoLoginError] = useState("")
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -63,7 +64,21 @@ export default function SignUpModal({ onClose }) {
       )
 
       if (result.success) {
-        setSuccess(true)
+        // Auto-login after successful registration
+        const loginResult = await authenticateUser(formData.email, formData.password)
+        if (loginResult.success) {
+          setSuccess(true)
+          // Notify parent to redirect to dashboard with user info
+          if (onSignUpSuccess) {
+            onSignUpSuccess(loginResult.user.role, loginResult.user)
+          }
+          setTimeout(() => {
+            onClose && onClose()
+          }, 1200) // Give user a moment to see success
+        } else {
+          setSuccess(true)
+          setAutoLoginError("Account created, but auto-login failed. Please sign in manually.")
+        }
       } else {
         setError(result.error || "Failed to create account. Please try again.")
       }
@@ -84,7 +99,7 @@ export default function SignUpModal({ onClose }) {
             </div>
             <h3 className="text-2xl font-bold text-foreground">Account Created!</h3>
             <p className="text-muted-foreground">
-              Your account has been successfully created. You can now sign in with your credentials.
+              Your account has been successfully created. Logging you in...
             </p>
             <div className="bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800/50 rounded-lg p-4 text-left">
               <p className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">
@@ -100,12 +115,11 @@ export default function SignUpModal({ onClose }) {
                 <strong>Role:</strong> {formData.role.charAt(0).toUpperCase() + formData.role.slice(1)}
               </p>
             </div>
-            <button
-              onClick={onClose}
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold py-3 rounded-lg transition-colors"
-            >
-              Go to Login
-            </button>
+            {autoLoginError && (
+              <div className="bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800/50 rounded-lg p-3">
+                <p className="text-sm text-red-900 dark:text-red-100">{autoLoginError}</p>
+              </div>
+            )}
           </div>
         </div>
       </div>

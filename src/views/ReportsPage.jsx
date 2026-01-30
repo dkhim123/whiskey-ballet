@@ -5,8 +5,8 @@ import TopBar from "../components/TopBar"
 import ReportsChart from "../components/ReportsChart"
 import ReportsFilters from "../components/ReportsFilters"
 import BranchSelector from "../components/BranchSelector"
-import { readData, readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToTransactions, subscribeToInventory } from "../services/realtimeListeners"
 import { convertToCSV, downloadCSV } from "../utils/csvExport"
 
 export default function ReportsPage({ currentUser }) {
@@ -28,149 +28,134 @@ export default function ReportsPage({ currentUser }) {
   const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
 
   useEffect(() => {
-    const loadReportData = async () => {
-      try {
-        const userId = currentUser?.id
-        if (!userId) {
-          console.error('No user ID available')
-          return
-        }
-        
-        // Read from admin-specific storage for transactions and inventory
-        const adminId = getAdminIdForStorage(currentUser)
-        const sharedData = await readSharedData(adminId)
-        const transactions = sharedData.transactions || []
-        const inventory = sharedData.inventory || []
-        
-        // Filter transactions by date range
-        const now = new Date()
-        let startDate = new Date()
-        
-        switch (dateRange) {
-          case 'today':
-            startDate.setHours(0, 0, 0, 0)
-            break
-          case 'week':
-            startDate.setDate(now.getDate() - 7)
-            break
-          case 'month':
-            startDate.setMonth(now.getMonth() - 1)
-            break
-          default:
-            startDate.setHours(0, 0, 0, 0)
-        }
-        
-        const filteredTransactions = transactions.filter(t => {
-          const transDate = new Date(t.timestamp)
-          // Only include completed transactions or transactions without status (backward compatibility)
-          const dateMatch = transDate >= startDate && (t.paymentStatus === 'completed' || !t.paymentStatus)
-          
-          // Apply branch filter for cashiers or when admin selects a branch
-          let branchMatch = true
-          if (currentUser.role === 'cashier') {
-            branchMatch = t.branchId === currentUser.branchId
-          } else if (currentUser.role === 'admin' && selectedBranch) {
-            branchMatch = t.branchId === selectedBranch
-          }
-          
-          // Apply payment method filter
-          let paymentMatch = true
-          if (paymentMethod !== 'all') {
-            paymentMatch = t.paymentMethod === paymentMethod
-          }
-          
-          return dateMatch && branchMatch && paymentMatch
-        })
-        
-        console.log(`📊 ReportsPage: Filtered ${filteredTransactions.length} transactions (Date: ${dateRange}, Branch: ${selectedBranch || 'ALL'}, Payment: ${paymentMethod})`)
-        
-        // Calculate sales summary
-        const totalSales = filteredTransactions.reduce((sum, t) => sum + (t.total ?? 0), 0)
-        const totalTransactions = filteredTransactions.length
-        const averageTransaction = totalTransactions > 0 ? totalSales / totalTransactions : 0
-        const cashSales = filteredTransactions.filter(t => t.paymentMethod === 'cash').reduce((sum, t) => sum + (t.total ?? 0), 0)
-        const mpesaSales = filteredTransactions.filter(t => t.paymentMethod === 'mpesa').reduce((sum, t) => sum + (t.total ?? 0), 0)
-        
-        // Calculate payment method distribution
-        const paymentMethodMap = {}
-        filteredTransactions.forEach(t => {
-          const method = t.paymentMethod === 'mpesa' ? 'M-Pesa' : 'Cash'
-          paymentMethodMap[method] = (paymentMethodMap[method] || 0) + (t.total ?? 0)
-        })
-        
-        const paymentMethodData = Object.entries(paymentMethodMap).map(([name, value]) => ({
-          name,
-          value: Math.round(value)
-        }))
-        
-        // Calculate top selling products
-        const productSalesMap = {}
-        filteredTransactions.forEach(t => {
-          t.items?.forEach(item => {
-            // Standardize on 'name' property
-            const productName = item.name || 'Unknown Product'
-            if (!productSalesMap[productName]) {
-              productSalesMap[productName] = {
-                quantity: 0,
-                revenue: 0
-              }
-            }
-            productSalesMap[productName].quantity += (item.quantity ?? 0)
-            productSalesMap[productName].revenue += ((item.quantity ?? 0) * (item.price ?? 0))
-          })
-        })
-        
-        const topProductsData = Object.entries(productSalesMap)
-          .map(([name, data]) => ({
-            name,
-            quantity: data.quantity,
-            revenue: Math.round(data.revenue)
-          }))
-          .sort((a, b) => b.revenue - a.revenue) // Sort by revenue by default
-        
-        // Calculate daily sales for last 7 days
-        const dailySalesMap = {}
-        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-        
-        for (let i = 6; i >= 0; i--) {
-          const date = new Date()
-          date.setDate(date.getDate() - i)
-          const dayName = days[date.getDay()]
-          dailySalesMap[dayName] = 0
-        }
-        
-        filteredTransactions.forEach(t => {
-          const date = new Date(t.timestamp)
-          if (date >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)) {
-            const dayName = days[date.getDay()]
-            dailySalesMap[dayName] += t.total
-          }
-        })
-        
-        const dailySalesData = Object.entries(dailySalesMap).map(([date, sales]) => ({
-          date,
-          sales: Math.round(sales)
-        }))
-        
-        setReportData({
-          paymentMethodData,
-          dailySalesData,
-          topProductsData,
-          salesSummary: {
-            totalSales: Math.round(totalSales),
-            totalTransactions,
-            averageTransaction: Math.round(averageTransaction),
-            cashSales: Math.round(cashSales),
-            mpesaSales: Math.round(mpesaSales)
-          }
-        })
-      } catch (error) {
-        console.error('Error loading report data:', error)
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsubTransactions = null;
+    let unsubInventory = null;
+    let transactions = [];
+    let inventory = [];
+    const updateReport = () => {
+      // Filter transactions by date range
+      const now = new Date();
+      let startDate = new Date();
+      switch (dateRange) {
+        case 'today':
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'week':
+          startDate.setDate(now.getDate() - 7);
+          break;
+        case 'month':
+          startDate.setMonth(now.getMonth() - 1);
+          break;
+        default:
+          startDate.setHours(0, 0, 0, 0);
       }
-    }
-    
-    loadReportData()
-  }, [dateRange, paymentMethod, currentUser, selectedBranch, productSortBy])
+      const filteredTransactions = transactions.filter(t => {
+        const transDate = new Date(t.timestamp);
+        // Only include completed transactions or transactions without status (backward compatibility)
+        const dateMatch = transDate >= startDate && (t.paymentStatus === 'completed' || !t.paymentStatus);
+        // Apply branch filter for cashiers or when admin selects a branch
+        let branchMatch = true;
+        if (currentUser.role === 'cashier') {
+          branchMatch = t.branchId === currentUser.branchId;
+        } else if (currentUser.role === 'admin' && selectedBranch) {
+          branchMatch = t.branchId === selectedBranch;
+        }
+        // Apply payment method filter
+        let paymentMatch = true;
+        if (paymentMethod !== 'all') {
+          paymentMatch = t.paymentMethod === paymentMethod;
+        }
+        return dateMatch && branchMatch && paymentMatch;
+      });
+      // ...existing code for report calculations...
+      // Calculate sales summary
+      const totalSales = filteredTransactions.reduce((sum, t) => sum + (t.total ?? 0), 0);
+      const totalTransactions = filteredTransactions.length;
+      const averageTransaction = totalTransactions > 0 ? totalSales / totalTransactions : 0;
+      const cashSales = filteredTransactions.filter(t => t.paymentMethod === 'cash').reduce((sum, t) => sum + (t.total ?? 0), 0);
+      const mpesaSales = filteredTransactions.filter(t => t.paymentMethod === 'mpesa').reduce((sum, t) => sum + (t.total ?? 0), 0);
+      // Calculate payment method distribution
+      const paymentMethodMap = {};
+      filteredTransactions.forEach(t => {
+        const method = t.paymentMethod === 'mpesa' ? 'M-Pesa' : 'Cash';
+        paymentMethodMap[method] = (paymentMethodMap[method] || 0) + (t.total ?? 0);
+      });
+      const paymentMethodData = Object.entries(paymentMethodMap).map(([name, value]) => ({
+        name,
+        value: Math.round(value)
+      }));
+      // Calculate top selling products
+      const productSalesMap = {};
+      filteredTransactions.forEach(t => {
+        t.items?.forEach(item => {
+          const productName = item.name || 'Unknown Product';
+          if (!productSalesMap[productName]) {
+            productSalesMap[productName] = {
+              quantity: 0,
+              revenue: 0
+            };
+          }
+          productSalesMap[productName].quantity += (item.quantity ?? 0);
+          productSalesMap[productName].revenue += ((item.quantity ?? 0) * (item.price ?? 0));
+        });
+      });
+      const topProductsData = Object.entries(productSalesMap)
+        .map(([name, data]) => ({
+          name,
+          quantity: data.quantity,
+          revenue: Math.round(data.revenue)
+        }))
+        .sort((a, b) => b.revenue - a.revenue);
+      // Calculate daily sales for last 7 days
+      const dailySalesMap = {};
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        const dayName = days[date.getDay()];
+        dailySalesMap[dayName] = 0;
+      }
+      filteredTransactions.forEach(t => {
+        const date = new Date(t.timestamp);
+        if (date >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)) {
+          const dayName = days[date.getDay()];
+          dailySalesMap[dayName] += t.total;
+        }
+      });
+      const dailySalesData = Object.entries(dailySalesMap).map(([date, sales]) => ({
+        date,
+        sales: Math.round(sales)
+      }));
+      setReportData({
+        paymentMethodData,
+        dailySalesData,
+        topProductsData,
+        salesSummary: {
+          totalSales: Math.round(totalSales),
+          totalTransactions,
+          averageTransaction: Math.round(averageTransaction),
+          cashSales: Math.round(cashSales),
+          mpesaSales: Math.round(mpesaSales)
+        }
+      });
+    };
+    unsubTransactions = subscribeToTransactions(adminId, (data) => {
+      transactions = data;
+      updateReport();
+    });
+    unsubInventory = subscribeToInventory(adminId, (data) => {
+      inventory = data;
+      updateReport();
+    });
+    return () => {
+      if (unsubTransactions) unsubTransactions();
+      if (unsubInventory) unsubInventory();
+    };
+  }, [currentUser, dateRange, paymentMethod, productSortBy, selectedBranch]);
+          
+  // (Removed orphaned code: filtering and report calculation now handled in updateReport)
 
   // Export functions for reports
   const exportSalesReport = () => {
@@ -266,23 +251,23 @@ export default function ReportsPage({ currentUser }) {
 
         {/* Sales Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl p-5 shadow-lg">
+          <div className="bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-xl p-5 shadow-lg">
             <div className="text-sm opacity-90 mb-1">Total Sales</div>
             <div className="text-3xl font-bold">KES {(reportData.salesSummary.totalSales || 0).toLocaleString()}</div>
           </div>
-          <div className="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl p-5 shadow-lg">
+          <div className="bg-linear-to-br from-green-500 to-green-600 text-white rounded-xl p-5 shadow-lg">
             <div className="text-sm opacity-90 mb-1">Transactions</div>
             <div className="text-3xl font-bold">{reportData.salesSummary.totalTransactions || 0}</div>
           </div>
-          <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-xl p-5 shadow-lg">
+          <div className="bg-linear-to-br from-purple-500 to-purple-600 text-white rounded-xl p-5 shadow-lg">
             <div className="text-sm opacity-90 mb-1">Avg. Transaction</div>
             <div className="text-3xl font-bold">KES {(reportData.salesSummary.averageTransaction || 0).toLocaleString()}</div>
           </div>
-          <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 text-white rounded-xl p-5 shadow-lg">
+          <div className="bg-linear-to-br from-yellow-500 to-yellow-600 text-white rounded-xl p-5 shadow-lg">
             <div className="text-sm opacity-90 mb-1">Cash Sales</div>
             <div className="text-3xl font-bold">KES {(reportData.salesSummary.cashSales || 0).toLocaleString()}</div>
           </div>
-          <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 text-white rounded-xl p-5 shadow-lg">
+          <div className="bg-linear-to-br from-indigo-500 to-indigo-600 text-white rounded-xl p-5 shadow-lg">
             <div className="text-sm opacity-90 mb-1">M-Pesa Sales</div>
             <div className="text-3xl font-bold">KES {(reportData.salesSummary.mpesaSales || 0).toLocaleString()}</div>
           </div>

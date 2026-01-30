@@ -29,24 +29,24 @@ export default function ServiceWorkerRegistration() {
 
     const registerServiceWorker = async () => {
       try {
-        console.log("Registering service worker...")
+        // ...existing code...
         
         const registration = await navigator.serviceWorker.register("/sw.js", {
           scope: "/",
           updateViaCache: "none", // Always check for updates
         })
 
-        console.log("Service Worker registered successfully:", registration)
+        // ...existing code...
 
         // Handle service worker updates
         registration.addEventListener("updatefound", () => {
           const newWorker = registration.installing
-          console.log("New service worker found, installing...")
+          // ...existing code...
 
           if (newWorker) {
             newWorker.addEventListener("statechange", () => {
               if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                console.log("New service worker installed, reloading page...")
+                // ...existing code...
                 // New service worker available, reload to activate
                 if (!isUpdating) {
                   isUpdating = true
@@ -62,14 +62,14 @@ export default function ServiceWorkerRegistration() {
 
         // Check for updates periodically
         interval = setInterval(() => {
-          console.log("Checking for service worker updates...")
+          // ...existing code...
           registration.update().catch(console.error)
         }, UPDATE_CHECK_INTERVAL)
 
         // Force update check when window gains focus (for desktop PWA)
         if (FORCE_UPDATE_ON_FOCUS) {
           handleFocus = () => {
-            console.log("Window focused, checking for updates...")
+            // ...existing code...
             registration.update().catch(console.error)
           }
           window.addEventListener("focus", handleFocus)

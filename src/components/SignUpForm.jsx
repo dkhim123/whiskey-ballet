@@ -77,10 +77,10 @@ export default function SignUpForm({ onSignUp, onSwitchToLogin }) {
     
     try {
       const result = await onSignUp(
+        formData.name,
         formData.email,
         formData.password,
-        formData.role,
-        formData.name
+        formData.role
       )
       
       if (!result.success) {

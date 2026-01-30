@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
-import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToCustomers } from "../services/realtimeListeners"
 import { parseFormValue } from "../utils/dateHelpers"
 import { exportCustomersToCSV } from "../utils/csvExport"
 
@@ -15,30 +15,16 @@ export default function CustomersPage({ currentUser }) {
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
 
-  // Load customers from admin-specific storage (isolated per admin)
+  // Real-time Firestore customers listener
   useEffect(() => {
-    const loadCustomers = async () => {
-      try {
-        const userId = currentUser?.id
-        if (!userId) return
-
-        const adminId = getAdminIdForStorage(currentUser)
-        const sharedData = await readSharedData(adminId)
-        const loadedCustomers = sharedData.customers || []
-        
-        console.log(`📊 Loaded ${loadedCustomers.length} customers:`)
-        loadedCustomers.forEach((c, i) => {
-          console.log(`   ${i + 1}. ${c.name} - Created by: ${c.createdBy?.name || 'UNKNOWN'} (Branch: ${c.branchId || 'NONE'})`)
-        })
-        
-        setCustomers(loadedCustomers)
-      } catch (error) {
-        console.error('Error loading customers:', error)
-      }
-    }
-
-    loadCustomers()
-  }, [currentUser])
+    if (!currentUser) return;
+    const adminId = getAdminIdForStorage(currentUser);
+    let unsub = null;
+    unsub = subscribeToCustomers(adminId, (data) => {
+      setCustomers(data);
+    });
+    return () => { if (unsub) unsub(); };
+  }, [currentUser]);
 
   // Filter by branch first - strict branch isolation for cashiers
   const branchFilteredCustomers = currentUser?.role === 'cashier'
@@ -1196,7 +1182,7 @@ function PaymentModal({ customer, onRecord, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[60] backdrop-blur-sm">
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-60 backdrop-blur-sm">
       <div className="bg-card rounded-lg shadow-2xl max-w-md w-full p-6 border-2 border-border">
         <h2 className="text-2xl font-bold text-foreground mb-2">Record Loan Payment</h2>
         <p className="text-sm text-muted-foreground mb-6">

@@ -38,43 +38,26 @@ export async function fixCorruptedBranches() {
       await tx.done;
       results.steps.push('✅ Cleared IndexedDB branches');
     } catch (error) {
-      console.warn('IndexedDB clear warning:', error);
-      results.steps.push('⚠️ IndexedDB branches cleared (or didn\'t exist)');
-      // Don't fail if IndexedDB doesn't exist yet
-    }
-
-    // Step 3: Clear user branch assignments
-    console.log('3️⃣ Clearing user branch assignments...');
-    try {
-      const users = JSON.parse(localStorage.getItem('pos-users-db') || '[]');
-      let clearedCount = 0;
-      
-      users.forEach(user => {
-        if (user.branchId) {
-          user.branchId = null;
-          clearedCount++;
-        }
-      });
-      
-      if (clearedCount > 0) {
-        localStorage.setItem('pos-users-db', JSON.stringify(users));
-        results.steps.push(`✅ Cleared branch assignments from ${clearedCount} user(s)`);
-      } else {
-        results.steps.push('ℹ️ No users had branch assignments');
-      }
-    } catch (error) {
-      results.errors.push(`❌ Error clearing user assignments: ${error.message}`);
+      results.errors.push(`❌ Error clearing IndexedDB: ${error.message}`);
       results.success = false;
     }
 
-    console.log('✅ Branch data reset complete!');
-    return results;
+    // Step 3: Reset user branch assignments
+    console.log('3️⃣ Resetting user branch assignments...');
+    try {
+      const users = await getAllUsers();
+      const updatedUsers = users.map(user => ({ ...user, branchId: null }));
+      await saveAllUsers(updatedUsers);
+      results.steps.push('✅ Reset user branch assignments');
+    } catch (error) {
+      results.errors.push(`❌ Error resetting user branch assignments: ${error.message}`);
+      results.success = false;
+    }
 
-  } catch (error) {
-    console.error('Branch fixer error:', error);
-    results.success = false;
-    results.errors.push(`Unexpected error: ${error.message}`);
     return results;
+  } catch (error) {
+    console.error('Error fixing corrupted branches:', error);
+    return { success: false, steps: results.steps, errors: [...results.errors, error.message] };
   }
 }
 

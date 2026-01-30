@@ -4,6 +4,17 @@
  */
 
 import db, { STORES } from "./database"
+import {
+  writeProductToRealtimeDB,
+  writeInventoryToRealtimeDB,
+  writeTransactionToRealtimeDB,
+  writeExpenseToRealtimeDB,
+  writeSupplierToRealtimeDB,
+  writePurchaseOrderToRealtimeDB,
+  writePaymentToRealtimeDB,
+  writeBranchToRealtimeDB,
+  writeUserToRealtimeDB
+} from "./firebaseRealtime"
 
 class DataService {
   constructor() {
@@ -35,14 +46,19 @@ class DataService {
     return db.get(STORES.PRODUCTS, id)
   }
 
+
   async addProduct(product) {
     await this.init()
-    return db.add(STORES.PRODUCTS, product)
+    const result = await db.add(STORES.PRODUCTS, product)
+    await writeProductToRealtimeDB(product)
+    return result
   }
 
   async updateProduct(product) {
     await this.init()
-    return db.update(STORES.PRODUCTS, product)
+    const result = await db.update(STORES.PRODUCTS, product)
+    await writeProductToRealtimeDB(product)
+    return result
   }
 
   async deleteProduct(id) {
@@ -76,12 +92,15 @@ class DataService {
     return branchId ? (txn && txn.branchId === branchId ? txn : null) : txn
   }
 
+
   async addTransaction(transaction, branchId) {
     await this.init()
     const finalBranchId = branchId || transaction.branchId
     if (!finalBranchId) throw new Error('branchId is required for all transactions')
     const txn = { ...transaction, branchId: finalBranchId }
-    return db.add(STORES.TRANSACTIONS, txn)
+    const result = await db.add(STORES.TRANSACTIONS, txn)
+    await writeTransactionToRealtimeDB(txn)
+    return result
   }
 
   async getTransactionsByUser(userId, branchId) {
@@ -118,20 +137,26 @@ class DataService {
     return branchId ? users.find(u => u.branchId === branchId) || null : users[0] || null
   }
 
+
   async addUser(user, branchId) {
     await this.init()
     const finalBranchId = branchId || user.branchId
     if (!finalBranchId) throw new Error('branchId is required for all users')
     const u = { ...user, branchId: finalBranchId }
-    return db.add(STORES.USERS, u)
+    const result = await db.add(STORES.USERS, u)
+    await writeUserToRealtimeDB(u)
+    return result
   }
+
 
   async updateUser(user, branchId) {
     await this.init()
     const finalBranchId = branchId || user.branchId
     if (!finalBranchId) throw new Error('branchId is required for all users')
     const u = { ...user, branchId: finalBranchId }
-    return db.update(STORES.USERS, u)
+    const result = await db.update(STORES.USERS, u)
+    await writeUserToRealtimeDB(u)
+    return result
   }
 
   async deleteUser(id, branchId) {
@@ -154,23 +179,21 @@ class DataService {
     return branchId ? (item && item.branchId === branchId ? item : null) : item
   }
 
+
   async updateInventory(productId, quantity, branchId) {
     await this.init()
     if (!branchId) throw new Error('branchId is required for all inventory updates')
     const item = await this.getInventoryItem(productId, branchId)
+    let result, inventoryObj
     if (item) {
-      return db.update(STORES.INVENTORY, {
-        ...item,
-        quantity,
-        branchId
-      })
+      inventoryObj = { ...item, quantity, branchId }
+      result = await db.update(STORES.INVENTORY, inventoryObj)
     } else {
-      return db.add(STORES.INVENTORY, {
-        productId,
-        quantity,
-        branchId
-      })
+      inventoryObj = { productId, quantity, branchId }
+      result = await db.add(STORES.INVENTORY, inventoryObj)
     }
+    await writeInventoryToRealtimeDB(inventoryObj)
+    return result
   }
 
   async adjustInventory(productId, adjustment, branchId) {

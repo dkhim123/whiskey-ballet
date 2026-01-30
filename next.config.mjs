@@ -99,8 +99,6 @@ const withPWA = withPWAInit({
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
-  distDir: 'out',
   typescript: {
     // Temporarily ignore build errors for gradual TypeScript adoption
     // TODO: Remove this once all TypeScript errors are fixed

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { clearLocalDataIfSafe } from "../utils/clearLocalData"
 import { Eye, EyeOff } from "lucide-react"
 import { authenticateUser, validateEmail } from "../utils/auth"
 import SignUpModal from "./SignUpModal"
@@ -55,7 +56,14 @@ export default function LoginForm({ onLogin }) {
           setIsSubmitting(false)
           return
         }
-        
+
+        // Clear local branch data to prevent old data from showing for new accounts
+        try {
+          await clearLocalDataIfSafe()
+        } catch (e) {
+          console.warn('Error clearing local branch data:', e);
+        }
+
         // Show role confirmation message
         alert(`✓ Logging in as ${getRoleDisplayName(result.user.role)}`)
         // Pass user data to parent component
@@ -191,9 +199,17 @@ export default function LoginForm({ onLogin }) {
       <button
         type="submit"
         disabled={isSubmitting}
-        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold py-3 rounded-lg transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold py-3 rounded-lg transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
       >
-        {isSubmitting ? "Signing in..." : "Sign In"}
+        {isSubmitting ? (
+          <>
+            <svg className="animate-spin h-5 w-5 mr-2 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+            </svg>
+            Signing in...
+          </>
+        ) : "Sign In"}
       </button>
 
       <div className="text-center space-y-2">
@@ -204,6 +220,7 @@ export default function LoginForm({ onLogin }) {
             onClick={() => setShowSignUp(true)}
             className="text-primary hover:underline font-medium"
             disabled={isSubmitting}
+            aria-disabled={isSubmitting}
           >
             Create admin account
           </button>
@@ -213,7 +230,14 @@ export default function LoginForm({ onLogin }) {
       
       {/* Sign Up Modal */}
       {showSignUp && (
-        <SignUpModal onClose={() => setShowSignUp(false)} />
+        <SignUpModal 
+          onClose={() => setShowSignUp(false)}
+          onSignUpSuccess={(role, user) => {
+            setShowSignUp(false)
+            // Immediately log in and redirect
+            onLogin(role, user)
+          }}
+        />
       )}
     </>
   )

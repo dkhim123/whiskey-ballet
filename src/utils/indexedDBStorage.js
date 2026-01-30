@@ -13,7 +13,7 @@ const DB_NAME = 'WhiskeyBalletPOS'
 // v3: Data preservation improvements
 // v4: Branding updates and database stability fixes
 // v5: Added branches and users stores for multi-branch support
-const DB_VERSION = 5
+const DB_VERSION = 2; // Incremented database version to force schema update
 
 // Object store names
 const STORES = {
@@ -36,210 +36,173 @@ const STORES = {
  */
 const initDB = () => {
   return new Promise((resolve, reject) => {
-    // Check if IndexedDB is available
-    if (typeof indexedDB === 'undefined') {
-      console.error('❌ IndexedDB is not available in this environment')
-      reject(new Error('IndexedDB not available'))
-      return
-    }
-
     try {
-      const request = indexedDB.open(DB_NAME, DB_VERSION)
-
-      request.onerror = () => {
-        console.error('❌ IndexedDB initialization failed:', request.error)
-        reject(request.error)
-      }
-
-      request.onsuccess = () => {
-        console.log('✅ IndexedDB initialized successfully')
-        resolve(request.result)
-      }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onupgradeneeded = (event) => {
-      const db = event.target.result
-      const oldVersion = event.oldVersion
-      console.log(`📦 Upgrading IndexedDB from version ${oldVersion} to ${DB_VERSION}...`)
+        const db = event.target.result;
 
-      // Create object stores with admin isolation
-      // Each store uses compound key: [adminId, id] for admin isolation
-      
-      // Inventory store - products/items
-      let inventoryStore
-      if (!db.objectStoreNames.contains(STORES.INVENTORY)) {
-        inventoryStore = db.createObjectStore(STORES.INVENTORY, { keyPath: ['adminId', 'id'] })
-        inventoryStore.createIndex('adminId', 'adminId', { unique: false })
-        inventoryStore.createIndex('sku', ['adminId', 'sku'], { unique: false })
-        inventoryStore.createIndex('barcode', ['adminId', 'barcode'], { unique: false })
-        inventoryStore.createIndex('category', ['adminId', 'category'], { unique: false })
-        console.log('✅ Created inventory store')
-      } else if (oldVersion < 2) {
-        inventoryStore = event.target.transaction.objectStore(STORES.INVENTORY)
-      }
-      
-      // Add deletedAt index for soft delete (version 2+)
-      if (oldVersion < 2 && inventoryStore && !inventoryStore.indexNames.contains('deletedAt')) {
-        inventoryStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to inventory store')
-      }
+        // Update Inventory store
+        if (!db.objectStoreNames.contains(STORES.INVENTORY)) {
+          const inventoryStore = db.createObjectStore(STORES.INVENTORY, { keyPath: 'id' });
+          inventoryStore.createIndex('adminId', 'adminId', { unique: false });
+          console.log('✅ Created inventory store with adminId index');
+        } else {
+          const inventoryStore = event.target.transaction.objectStore(STORES.INVENTORY);
+          if (!inventoryStore.indexNames.contains('adminId')) {
+            inventoryStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to inventory store');
+          }
+        }
 
-      // Transactions store
-      let transactionsStore
-      if (!db.objectStoreNames.contains(STORES.TRANSACTIONS)) {
-        transactionsStore = db.createObjectStore(STORES.TRANSACTIONS, { keyPath: ['adminId', 'id'] })
-        transactionsStore.createIndex('adminId', 'adminId', { unique: false })
-        transactionsStore.createIndex('date', ['adminId', 'date'], { unique: false })
-        transactionsStore.createIndex('paymentStatus', ['adminId', 'paymentStatus'], { unique: false })
-        transactionsStore.createIndex('paymentMethod', ['adminId', 'paymentMethod'], { unique: false })
-        console.log('✅ Created transactions store')
-      } else if (oldVersion < 2) {
-        transactionsStore = event.target.transaction.objectStore(STORES.TRANSACTIONS)
-      }
-      
-      if (oldVersion < 2 && transactionsStore && !transactionsStore.indexNames.contains('deletedAt')) {
-        transactionsStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to transactions store')
-      }
+        // Update Transactions store
+        if (!db.objectStoreNames.contains(STORES.TRANSACTIONS)) {
+          const transactionsStore = db.createObjectStore(STORES.TRANSACTIONS, { keyPath: 'id' });
+          transactionsStore.createIndex('adminId', 'adminId', { unique: false });
+          console.log('✅ Created transactions store with adminId index');
+        } else {
+          const transactionsStore = event.target.transaction.objectStore(STORES.TRANSACTIONS);
+          if (!transactionsStore.indexNames.contains('adminId')) {
+            transactionsStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to transactions store');
+          }
+        }
 
-      // Suppliers store
-      let suppliersStore
-      if (!db.objectStoreNames.contains(STORES.SUPPLIERS)) {
-        suppliersStore = db.createObjectStore(STORES.SUPPLIERS, { keyPath: ['adminId', 'id'] })
-        suppliersStore.createIndex('adminId', 'adminId', { unique: false })
-        suppliersStore.createIndex('name', ['adminId', 'name'], { unique: false })
-        console.log('✅ Created suppliers store')
-      } else if (oldVersion < 2) {
-        suppliersStore = event.target.transaction.objectStore(STORES.SUPPLIERS)
-      }
-      
-      if (oldVersion < 2 && suppliersStore && !suppliersStore.indexNames.contains('deletedAt')) {
-        suppliersStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to suppliers store')
-      }
+        // Update Suppliers store
+        if (!db.objectStoreNames.contains(STORES.SUPPLIERS)) {
+          const suppliersStore = db.createObjectStore(STORES.SUPPLIERS, { keyPath: ['adminId', 'id'] });
+          suppliersStore.createIndex('adminId', 'adminId', { unique: false });
+          suppliersStore.createIndex('name', ['adminId', 'name'], { unique: false });
+          console.log('✅ Created suppliers store');
+        } else {
+          const suppliersStore = event.target.transaction.objectStore(STORES.SUPPLIERS);
+          if (!suppliersStore.indexNames.contains('adminId')) {
+            suppliersStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to suppliers store');
+          }
+        }
 
-      // Purchase Orders store
-      let poStore
-      if (!db.objectStoreNames.contains(STORES.PURCHASE_ORDERS)) {
-        poStore = db.createObjectStore(STORES.PURCHASE_ORDERS, { keyPath: ['adminId', 'id'] })
-        poStore.createIndex('adminId', 'adminId', { unique: false })
-        poStore.createIndex('status', ['adminId', 'status'], { unique: false })
-        console.log('✅ Created purchase orders store')
-      } else if (oldVersion < 2) {
-        poStore = event.target.transaction.objectStore(STORES.PURCHASE_ORDERS)
-      }
-      
-      if (oldVersion < 2 && poStore && !poStore.indexNames.contains('deletedAt')) {
-        poStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to purchase orders store')
-      }
+        // Update Purchase Orders store
+        if (!db.objectStoreNames.contains(STORES.PURCHASE_ORDERS)) {
+          const poStore = db.createObjectStore(STORES.PURCHASE_ORDERS, { keyPath: ['adminId', 'id'] });
+          poStore.createIndex('adminId', 'adminId', { unique: false });
+          poStore.createIndex('status', ['adminId', 'status'], { unique: false });
+          console.log('✅ Created purchase orders store');
+        } else {
+          const poStore = event.target.transaction.objectStore(STORES.PURCHASE_ORDERS);
+          if (!poStore.indexNames.contains('adminId')) {
+            poStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to purchase orders store');
+          }
+        }
 
-      // Goods Received Notes store
-      let grnStore
-      if (!db.objectStoreNames.contains(STORES.GOODS_RECEIVED_NOTES)) {
-        grnStore = db.createObjectStore(STORES.GOODS_RECEIVED_NOTES, { keyPath: ['adminId', 'id'] })
-        grnStore.createIndex('adminId', 'adminId', { unique: false })
-        console.log('✅ Created goods received notes store')
-      } else if (oldVersion < 2) {
-        grnStore = event.target.transaction.objectStore(STORES.GOODS_RECEIVED_NOTES)
-      }
-      
-      if (oldVersion < 2 && grnStore && !grnStore.indexNames.contains('deletedAt')) {
-        grnStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to goods received notes store')
-      }
+        // Update Goods Received Notes store
+        if (!db.objectStoreNames.contains(STORES.GOODS_RECEIVED_NOTES)) {
+          const grnStore = db.createObjectStore(STORES.GOODS_RECEIVED_NOTES, { keyPath: ['adminId', 'id'] });
+          grnStore.createIndex('adminId', 'adminId', { unique: false });
+          console.log('✅ Created goods received notes store');
+        } else {
+          const grnStore = event.target.transaction.objectStore(STORES.GOODS_RECEIVED_NOTES);
+          if (!grnStore.indexNames.contains('adminId')) {
+            grnStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to goods received notes store');
+          }
+        }
 
-      // Supplier Payments store
-      let paymentsStore
-      if (!db.objectStoreNames.contains(STORES.SUPPLIER_PAYMENTS)) {
-        paymentsStore = db.createObjectStore(STORES.SUPPLIER_PAYMENTS, { keyPath: ['adminId', 'id'] })
-        paymentsStore.createIndex('adminId', 'adminId', { unique: false })
-        console.log('✅ Created supplier payments store')
-      } else if (oldVersion < 2) {
-        paymentsStore = event.target.transaction.objectStore(STORES.SUPPLIER_PAYMENTS)
-      }
-      
-      if (oldVersion < 2 && paymentsStore && !paymentsStore.indexNames.contains('deletedAt')) {
-        paymentsStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to supplier payments store')
-      }
+        // Update Supplier Payments store
+        if (!db.objectStoreNames.contains(STORES.SUPPLIER_PAYMENTS)) {
+          const paymentsStore = db.createObjectStore(STORES.SUPPLIER_PAYMENTS, { keyPath: ['adminId', 'id'] });
+          paymentsStore.createIndex('adminId', 'adminId', { unique: false });
+          console.log('✅ Created supplier payments store');
+        } else {
+          const paymentsStore = event.target.transaction.objectStore(STORES.SUPPLIER_PAYMENTS);
+          if (!paymentsStore.indexNames.contains('adminId')) {
+            paymentsStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to supplier payments store');
+          }
+        }
 
-      // Stock Adjustments store
-      let adjustmentsStore
-      if (!db.objectStoreNames.contains(STORES.STOCK_ADJUSTMENTS)) {
-        adjustmentsStore = db.createObjectStore(STORES.STOCK_ADJUSTMENTS, { keyPath: ['adminId', 'id'] })
-        adjustmentsStore.createIndex('adminId', 'adminId', { unique: false })
-        console.log('✅ Created stock adjustments store')
-      } else if (oldVersion < 2) {
-        adjustmentsStore = event.target.transaction.objectStore(STORES.STOCK_ADJUSTMENTS)
-      }
-      
-      if (oldVersion < 2 && adjustmentsStore && !adjustmentsStore.indexNames.contains('deletedAt')) {
-        adjustmentsStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to stock adjustments store')
-      }
+        // Update Stock Adjustments store
+        if (!db.objectStoreNames.contains(STORES.STOCK_ADJUSTMENTS)) {
+          const adjustmentsStore = db.createObjectStore(STORES.STOCK_ADJUSTMENTS, { keyPath: ['adminId', 'id'] });
+          adjustmentsStore.createIndex('adminId', 'adminId', { unique: false });
+          console.log('✅ Created stock adjustments store');
+        } else {
+          const adjustmentsStore = event.target.transaction.objectStore(STORES.STOCK_ADJUSTMENTS);
+          if (!adjustmentsStore.indexNames.contains('adminId')) {
+            adjustmentsStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to stock adjustments store');
+          }
+        }
 
-      // Customers store
-      let customersStore
-      if (!db.objectStoreNames.contains(STORES.CUSTOMERS)) {
-        customersStore = db.createObjectStore(STORES.CUSTOMERS, { keyPath: ['adminId', 'id'] })
-        customersStore.createIndex('adminId', 'adminId', { unique: false })
-        customersStore.createIndex('phone', ['adminId', 'phone'], { unique: false })
-        console.log('✅ Created customers store')
-      } else if (oldVersion < 2) {
-        customersStore = event.target.transaction.objectStore(STORES.CUSTOMERS)
-      }
-      
-      if (oldVersion < 2 && customersStore && !customersStore.indexNames.contains('deletedAt')) {
-        customersStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to customers store')
-      }
+        // Update Customers store
+        if (!db.objectStoreNames.contains(STORES.CUSTOMERS)) {
+          const customersStore = db.createObjectStore(STORES.CUSTOMERS, { keyPath: ['adminId', 'id'] });
+          customersStore.createIndex('adminId', 'adminId', { unique: false });
+          customersStore.createIndex('phone', ['adminId', 'phone'], { unique: false });
+          console.log('✅ Created customers store');
+        } else {
+          const customersStore = event.target.transaction.objectStore(STORES.CUSTOMERS);
+          if (!customersStore.indexNames.contains('adminId')) {
+            customersStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to customers store');
+          }
+        }
 
-      // Expenses store
-      let expensesStore
-      if (!db.objectStoreNames.contains(STORES.EXPENSES)) {
-        expensesStore = db.createObjectStore(STORES.EXPENSES, { keyPath: ['adminId', 'id'] })
-        expensesStore.createIndex('adminId', 'adminId', { unique: false })
-        expensesStore.createIndex('date', ['adminId', 'date'], { unique: false })
-        console.log('✅ Created expenses store')
-      } else if (oldVersion < 2) {
-        expensesStore = event.target.transaction.objectStore(STORES.EXPENSES)
-      }
-      
-      if (oldVersion < 2 && expensesStore && !expensesStore.indexNames.contains('deletedAt')) {
-        expensesStore.createIndex('deletedAt', ['adminId', 'deletedAt'], { unique: false })
-        console.log('✅ Added deletedAt index to expenses store')
-      }
+        // Update Expenses store
+        if (!db.objectStoreNames.contains(STORES.EXPENSES)) {
+          const expensesStore = db.createObjectStore(STORES.EXPENSES, { keyPath: ['adminId', 'id'] });
+          expensesStore.createIndex('adminId', 'adminId', { unique: false });
+          expensesStore.createIndex('date', ['adminId', 'date'], { unique: false });
+          console.log('✅ Created expenses store');
+        } else {
+          const expensesStore = event.target.transaction.objectStore(STORES.EXPENSES);
+          if (!expensesStore.indexNames.contains('adminId')) {
+            expensesStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to expenses store');
+          }
+        }
 
-      // Settings store (per admin)
-      if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
-        const settingsStore = db.createObjectStore(STORES.SETTINGS, { keyPath: 'adminId' })
-        console.log('✅ Created settings store')
-      }
+        // Update Settings store (per admin)
+        if (!db.objectStoreNames.contains(STORES.SETTINGS)) {
+          const settingsStore = db.createObjectStore(STORES.SETTINGS, { keyPath: 'adminId' });
+          console.log('✅ Created settings store');
+        }
 
-      // Branches store (version 5+)
-      if (!db.objectStoreNames.contains(STORES.BRANCHES)) {
-        const branchesStore = db.createObjectStore(STORES.BRANCHES, { keyPath: 'id' })
-        branchesStore.createIndex('adminId', 'adminId', { unique: false })
-        branchesStore.createIndex('isActive', ['adminId', 'isActive'], { unique: false })
-        console.log('✅ Created branches store')
-      }
+        // Branches store (version 5+)
+        if (!db.objectStoreNames.contains(STORES.BRANCHES)) {
+          const branchesStore = db.createObjectStore(STORES.BRANCHES, { keyPath: 'id' });
+          branchesStore.createIndex('adminId', 'adminId', { unique: false });
+          branchesStore.createIndex('isActive', ['adminId', 'isActive'], { unique: false });
+          branchesStore.createIndex('branchId', 'branchId', { unique: true });
+          console.log('✅ Created branches store');
+        }
 
-      // Users store (version 5+) - for cashier management
-      if (!db.objectStoreNames.contains(STORES.USERS)) {
-        const usersStore = db.createObjectStore(STORES.USERS, { keyPath: 'id' })
-        usersStore.createIndex('adminId', 'adminId', { unique: false })
-        usersStore.createIndex('branchId', 'branchId', { unique: false })
-        usersStore.createIndex('role', ['adminId', 'role'], { unique: false })
-        console.log('✅ Created users store')
-      }
+        // Users store (version 5+) - for cashier management
+        if (!db.objectStoreNames.contains(STORES.USERS)) {
+          const usersStore = db.createObjectStore(STORES.USERS, { keyPath: 'id' });
+          usersStore.createIndex('adminId', 'adminId', { unique: false });
+          usersStore.createIndex('branchId', 'branchId', { unique: false });
+          usersStore.createIndex('role', ['adminId', 'role'], { unique: false });
+          console.log('✅ Created users store');
+        }
 
-      console.log('✅ All IndexedDB stores created successfully')
-      }
+        console.log('✅ All IndexedDB stores created successfully');
+      };
+
+      request.onsuccess = (event) => {
+        resolve(event.target.result);
+      };
+
+      request.onerror = (event) => {
+        console.error('❌ Error opening IndexedDB:', event.target.error);
+        reject(event.target.error);
+      };
     } catch (error) {
-      console.error('❌ Exception opening IndexedDB:', error)
-      reject(error)
+      console.error('❌ Exception opening IndexedDB:', error);
+      reject(error);
     }
-  })
+  });
 }
 
 /**

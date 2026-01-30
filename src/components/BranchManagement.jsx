@@ -62,7 +62,7 @@ export default function BranchManagement({ currentUser }) {
       setError("")
     } catch (err) {
       console.error("Error loading branches:", err)
-      setError("Failed to load branches")
+      setError("Failed to load branches. Please try again later.")
     } finally {
       setLoading(false)
     }
