@@ -37,16 +37,11 @@ let db = null
 let auth = null
 let storage = null
 
-if (isFirebaseConfigured()) {
+// Only initialize Firebase on the client side to avoid SSR issues
+if (typeof window !== 'undefined' && isFirebaseConfigured()) {
   try {
-    // SSR-safe: always use getApps()[0] if already initialized
-    if (typeof window === 'undefined') {
-      // On server, always use getApps()[0] if exists, else initialize
-      app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-    } else {
-      // On client, same logic
-      app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-    }
+    // Client-side initialization
+    app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
     // Get Firestore database instance with modern local cache
     db = initializeFirestore(app, {
@@ -59,17 +54,13 @@ if (isFirebaseConfigured()) {
     // Get Storage instance
     storage = getStorage(app)
 
-    if (typeof window !== 'undefined') {
-      console.log('✅ Firebase initialized successfully')
-      console.log('📍 Project:', firebaseConfig.projectId)
-    }
+    console.log('✅ Firebase initialized successfully')
+    console.log('📍 Project:', firebaseConfig.projectId)
   } catch (error) {
     console.error('❌ Firebase initialization error:', error)
   }
-} else {
-  if (typeof window !== 'undefined') {
-    console.warn('⚠️ Firebase not configured - check .env.local file')
-  }
+} else if (typeof window !== 'undefined' && !isFirebaseConfigured()) {
+  console.warn('⚠️ Firebase not configured - check .env.local file')
 }
 
 // Firebase Storage utility functions

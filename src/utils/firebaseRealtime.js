@@ -11,14 +11,37 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-const db = getDatabase(app);
+// Initialize Firebase Realtime Database only on client side to avoid SSR issues
+let db = null;
+
+function getRealtimeDB() {
+  if (typeof window === 'undefined') {
+    return null; // Return null during SSR
+  }
+  
+  if (!db) {
+    try {
+      const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+      db = getDatabase(app);
+    } catch (error) {
+      console.error('Firebase Realtime Database initialization error:', error);
+      return null;
+    }
+  }
+  
+  return db;
+}
 
 
 // Generic write function for any entity
 export function writeEntityToRealtimeDB(entityType, entity) {
+  const database = getRealtimeDB();
+  if (!database) {
+    console.warn('Firebase Realtime Database not available (SSR or not configured)');
+    return Promise.resolve();
+  }
   if (!entity.id) throw new Error('Entity must have an id')
-  return set(ref(db, `${entityType}/${entity.id}`), entity)
+  return set(ref(database, `${entityType}/${entity.id}`), entity)
 }
 
 // For compatibility with old imports
@@ -27,7 +50,12 @@ export const writeUserToRealtimeDB = (user) => writeEntityToRealtimeDB('users', 
 // Generic read function for any entity
 import { get, child } from "firebase/database"
 export async function readEntityFromRealtimeDB(entityType, id) {
-  const snapshot = await get(child(ref(db), `${entityType}/${id}`))
+  const database = getRealtimeDB();
+  if (!database) {
+    console.warn('Firebase Realtime Database not available (SSR or not configured)');
+    return null;
+  }
+  const snapshot = await get(child(ref(database), `${entityType}/${id}`))
   return snapshot.exists() ? snapshot.val() : null
 }
 
