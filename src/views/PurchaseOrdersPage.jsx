@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
 import { getAdminIdForStorage } from "../utils/auth"
 import { subscribeToPurchaseOrders } from "../services/realtimeExtraListeners"
-import { subscribeToSuppliers } from "../services/realtimeListeners"
+import { subscribeToSuppliers, subscribeToInventory } from "../services/realtimeListeners"
 import { createUserSnapshot } from "../utils/userTracking"
 
 const PO_STATUSES = ["draft", "ordered", "partially_received", "received", "cancelled"]

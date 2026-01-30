@@ -13,7 +13,7 @@ const DB_NAME = 'WhiskeyBalletPOS'
 // v3: Data preservation improvements
 // v4: Branding updates and database stability fixes
 // v5: Added branches and users stores for multi-branch support
-const DB_VERSION = 2; // Incremented database version to force schema update
+const DB_VERSION = 5; // Updated to match existing database version
 
 // Object store names
 const STORES = {
@@ -195,8 +195,15 @@ const initDB = () => {
       };
 
       request.onerror = (event) => {
-        console.error('❌ Error opening IndexedDB:', event.target.error);
-        reject(event.target.error);
+        const error = event.target.error;
+        console.error('❌ Error opening IndexedDB:', error);
+        console.error('Database name:', DB_NAME, 'Requested version:', DB_VERSION);
+        if (error && error.name === 'VersionError') {
+          console.error('⚠️ IndexedDB Version Conflict: The database exists with a different version.');
+          console.error('⚠️ This usually happens when the app tries to open an older version than what exists.');
+          console.error('⚠️ Current DB_VERSION:', DB_VERSION);
+        }
+        reject(error);
       };
     } catch (error) {
       console.error('❌ Exception opening IndexedDB:', error);

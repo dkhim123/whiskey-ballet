@@ -413,7 +413,14 @@ export const registerUser = async (name, email, password, role, createdBy = null
       branchId: branchId || null
     }
     users.push(newUser)
-    await saveUsersToStorage(users)
+    
+    // Save user to storage (don't block registration if this fails)
+    try {
+      await saveUsersToStorage(users)
+    } catch (storageError) {
+      console.warn('Error saving user to storage (continuing anyway):', storageError)
+      // Don't fail the registration if storage write fails - user can still use Firebase Auth
+    }
 
     // Also write user to Firebase Realtime Database if configured
     if (firebaseConfigured) {
