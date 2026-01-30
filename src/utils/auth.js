@@ -412,13 +412,17 @@ export const registerUser = async (name, email, password, role, createdBy = null
       createdBy: createdBy,
       branchId: branchId || null
     }
-    users.push(newUser)
     
-    // Save user to storage (don't block registration if this fails)
+    // Save user to storage (don't block registration if this fails, but also don't add to in-memory array)
+    let savedToLocalStorage = false
     try {
+      users.push(newUser)
       await saveUsersToStorage(users)
+      savedToLocalStorage = true
     } catch (storageError) {
-      console.warn('Error saving user to storage (continuing anyway):', storageError)
+      // Remove from in-memory array since save failed to prevent inconsistent state
+      users.pop()
+      console.warn('Error saving user to local storage (user will exist in Firebase Auth only):', storageError)
       // Don't fail the registration if storage write fails - user can still use Firebase Auth
     }
 
