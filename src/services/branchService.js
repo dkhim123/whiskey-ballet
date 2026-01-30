@@ -63,6 +63,9 @@ const COLLECTION_NAME = 'branches';
 // Offline queue for operations when Firebase is unavailable
 let offlineQueue = [];
 
+// Track if event listeners have been initialized to prevent duplicates
+let listenersInitialized = false;
+
 /**
  * Get current admin ID from localStorage
  */
@@ -452,18 +455,23 @@ export function initializeBranchService() {
     console.error('Error loading offline queue:', error);
   }
 
-  // Save queue on page unload
-  window.addEventListener('beforeunload', () => {
-    if (offlineQueue.length > 0) {
-      localStorage.setItem('branch-offline-queue', JSON.stringify(offlineQueue));
-    }
-  });
+  // Only add event listeners once to prevent memory leaks
+  if (!listenersInitialized) {
+    listenersInitialized = true;
+    
+    // Save queue on page unload
+    window.addEventListener('beforeunload', () => {
+      if (offlineQueue.length > 0) {
+        localStorage.setItem('branch-offline-queue', JSON.stringify(offlineQueue));
+      }
+    });
 
-  // Firebase temporarily disabled
-  // Process queue when connection is restored
-  // window.addEventListener('online', () => {
-  //   if (isFirebaseConfigured() && db) {
-  //     processOfflineQueue();
-  //   }
-  // });
+    // Firebase temporarily disabled
+    // Process queue when connection is restored
+    // window.addEventListener('online', () => {
+    //   if (isFirebaseConfigured() && db) {
+    //     processOfflineQueue();
+    //   }
+    // });
+  }
 }

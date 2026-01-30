@@ -231,8 +231,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   useEffect(() => {
     if (!currentUser) return;
     const adminId = getAdminIdForStorage(currentUser);
-    let unsub = null;
-    unsub = subscribeToInventory(adminId, (data) => {
+    const unsub = subscribeToInventory(adminId, (data) => {
       // Store all inventory for admin
       setAllInventory(data);
       // Filter by branch for cashiers, or by selected branch for admin
@@ -252,7 +251,11 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
         onInventoryChange(filteredInventory);
       }
     });
-    return () => { if (unsub) unsub(); };
+    return () => { 
+      if (typeof unsub === 'function') {
+        unsub();
+      }
+    };
   }, [currentUser?.id, selectedBranch]);
 
   // Debounce search for better performance

@@ -74,7 +74,7 @@ export const validateAndFixBranchData = async (adminId = null, users = []) => {
     });
 
     // Save updated transactions back to storage
-    await saveSharedData(adminId, { ...sharedData, transactions: updatedTransactions });
+    await writeSharedData({ ...sharedData, transactions: updatedTransactions }, adminId);
     return { success: true, validated: validatedCount };
   } catch (error) {
     console.error('Error validating and fixing branch data:', error);
