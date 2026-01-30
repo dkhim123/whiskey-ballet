@@ -414,11 +414,9 @@ export const registerUser = async (name, email, password, role, createdBy = null
     }
     
     // Save user to storage (don't block registration if this fails, but also don't add to in-memory array)
-    let savedToLocalStorage = false
     try {
       users.push(newUser)
       await saveUsersToStorage(users)
-      savedToLocalStorage = true
     } catch (storageError) {
       // Remove from in-memory array since save failed to prevent inconsistent state
       users.pop()
@@ -432,7 +430,7 @@ export const registerUser = async (name, email, password, role, createdBy = null
         await writeUserToRealtimeDB(newUser)
       } catch (dbError) {
         console.warn('Error writing user to Realtime DB (continuing in offline mode):', dbError)
-        // Don't fail the registration if Firebase DB write fails - user is already saved locally
+        // Don't fail the registration if Firebase DB write fails
       }
     }
 
