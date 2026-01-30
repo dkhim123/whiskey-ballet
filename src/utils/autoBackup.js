@@ -57,9 +57,13 @@ export async function saveBackupToIndexedDB(data) {
     const request = store.put(backup);
 
     request.onsuccess = () => resolve(backup);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
     
     transaction.oncomplete = () => db.close();
+    transaction.onerror = () => db.close();
   });
 }
 
@@ -75,9 +79,13 @@ export async function getAllBackups() {
     const request = store.getAll();
 
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
     
     transaction.oncomplete = () => db.close();
+    transaction.onerror = () => db.close();
   });
 }
 
@@ -94,9 +102,13 @@ export async function getBackupByDate(dateString) {
     const request = index.get(dateString);
 
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
     
     transaction.oncomplete = () => db.close();
+    transaction.onerror = () => db.close();
   });
 }
 
@@ -257,9 +269,13 @@ export async function deleteBackup(backupId) {
     const request = store.delete(backupId);
 
     request.onsuccess = () => resolve(true);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
     
     transaction.oncomplete = () => db.close();
+    transaction.onerror = () => db.close();
   });
 }
 
@@ -275,9 +291,13 @@ export async function deleteAllBackups() {
     const request = store.clear();
 
     request.onsuccess = () => resolve(true);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
     
     transaction.oncomplete = () => db.close();
+    transaction.onerror = () => db.close();
   });
 }
 
