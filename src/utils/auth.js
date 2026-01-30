@@ -5,7 +5,7 @@
 
 import bcrypt from 'bcryptjs'
 import { writeUserToRealtimeDB, readEntityFromRealtimeDB } from './firebaseRealtime'
-import { auth } from '../config/firebase'
+import { auth, isFirebaseConfigured } from '../config/firebase'
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
 
 const USERS_STORAGE_KEY = 'pos-users-db'
@@ -248,48 +248,84 @@ export const authenticateUser = async (email, password) => {
     if (!validateEmail(sanitizedEmail)) {
       return { success: false, error: 'Invalid email format' }
     }
-    // Try Firebase Auth first
-    let userCredential
-    try {
-      userCredential = await signInWithEmailAndPassword(auth, sanitizedEmail, password)
-    } catch (firebaseError) {
-      // Firebase Auth failed
-      let errorMsg = 'Invalid email or password'
-      if (firebaseError.code === 'auth/user-disabled') errorMsg = 'Account is disabled.'
-      if (firebaseError.code === 'auth/too-many-requests') errorMsg = 'Too many failed attempts. Try again later.'
-      return { success: false, error: errorMsg }
-    }
-    // Fetch user profile from Firebase Realtime DB (users/{uid})
-    const user = userCredential.user
-    let userProfile = null
-    try {
-      userProfile = await readEntityFromRealtimeDB('users', user.uid)
-    } catch (e) {
-      // ignore
-    }
-    // Fallback to localStorage if not found in DB (legacy)
-    if (!userProfile) {
+    
+    // Check if Firebase is configured
+    const firebaseConfigured = isFirebaseConfigured()
+    
+    // Try Firebase Auth first if configured
+    if (firebaseConfigured && auth) {
+      let userCredential
       try {
-        const usersRaw = localStorage.getItem('pos-users-db')
-        if (usersRaw) {
-          const users = JSON.parse(usersRaw)
-          userProfile = users.find(u => u.email.toLowerCase() === sanitizedEmail)
+        userCredential = await signInWithEmailAndPassword(auth, sanitizedEmail, password)
+        // Fetch user profile from Firebase Realtime DB (users/{uid})
+        const user = userCredential.user
+        let userProfile = null
+        try {
+          userProfile = await readEntityFromRealtimeDB('users', user.uid)
+        } catch (e) {
+          // ignore
         }
-      } catch (e) {
-        // ignore
+        // Fallback to localStorage if not found in DB (legacy)
+        if (!userProfile) {
+          try {
+            const usersRaw = localStorage.getItem('pos-users-db')
+            if (usersRaw) {
+              const users = JSON.parse(usersRaw)
+              userProfile = users.find(u => u.email.toLowerCase() === sanitizedEmail)
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+        return {
+          success: true,
+          user: {
+            id: userProfile?.id || user.uid,
+            email: user.email,
+            role: userProfile?.role || 'cashier',
+            name: userProfile?.name || user.displayName || '',
+            createdBy: userProfile?.createdBy || null,
+            branchId: userProfile?.branchId || null
+          },
+          firebaseAuth: true
+        }
+      } catch (firebaseError) {
+        // Firebase Auth failed, try offline fallback
+        console.log('Firebase Auth failed, trying offline authentication')
       }
     }
+    
+    // Offline authentication using localStorage
+    const users = await getUsersFromStorage()
+    const user = users.find(u => u.email === sanitizedEmail)
+    
+    if (!user) {
+      return { success: false, error: 'Invalid email or password' }
+    }
+    
+    // Verify password
+    const isValidPassword = await verifyPassword(password, user.passwordHash)
+    
+    if (!isValidPassword) {
+      return { success: false, error: 'Invalid email or password' }
+    }
+    
+    // Check if user is active
+    if (!user.isActive) {
+      return { success: false, error: 'Account is disabled' }
+    }
+    
     return {
       success: true,
       user: {
-        id: userProfile?.id || user.uid,
+        id: user.id,
         email: user.email,
-        role: userProfile?.role || 'cashier',
-        name: userProfile?.name || user.displayName || '',
-        createdBy: userProfile?.createdBy || null,
-        branchId: userProfile?.branchId || null
+        role: user.role,
+        name: user.name,
+        createdBy: user.createdBy,
+        branchId: user.branchId || null
       },
-      firebaseAuth: true
+      firebaseAuth: false
     }
   } catch (error) {
     console.error('Error authenticating user:', error)
@@ -344,15 +380,22 @@ export const registerUser = async (name, email, password, role, createdBy = null
       return { success: false, error: 'User with this email already exists' }
     }
 
-    // Create user in Firebase Auth
+    // Create user in Firebase Auth (only if Firebase is configured)
     let authUser = null
-    try {
-      authUser = await createUserWithEmailAndPassword(auth, sanitizedEmail, password)
-    } catch (authError) {
-      if (authError.code === 'auth/email-already-in-use') {
-        return { success: false, error: 'User with this email already exists in Firebase Auth' }
+    const firebaseConfigured = isFirebaseConfigured()
+    
+    if (firebaseConfigured && auth) {
+      try {
+        authUser = await createUserWithEmailAndPassword(auth, sanitizedEmail, password)
+      } catch (authError) {
+        if (authError.code === 'auth/email-already-in-use') {
+          return { success: false, error: 'User with this email already exists in Firebase Auth' }
+        }
+        console.warn('Firebase Auth failed, falling back to offline mode:', authError)
+        // Continue with offline mode instead of failing
       }
-      return { success: false, error: 'Failed to create user in Firebase Authentication.' }
+    } else {
+      console.log('Firebase not configured, creating user in offline mode')
     }
 
     // Optionally, add user to local storage for offline reference (not for login)
@@ -372,12 +415,14 @@ export const registerUser = async (name, email, password, role, createdBy = null
     users.push(newUser)
     await saveUsersToStorage(users)
 
-    // Also write user to Firebase Realtime Database if needed
-    try {
-      await writeUserToRealtimeDB(newUser)
-    } catch (dbError) {
-      console.error('Error writing user to Realtime DB:', dbError)
-      return { success: false, error: 'Failed to save user to database. Check your Firebase rules and network.' }
+    // Also write user to Firebase Realtime Database if configured
+    if (firebaseConfigured) {
+      try {
+        await writeUserToRealtimeDB(newUser)
+      } catch (dbError) {
+        console.warn('Error writing user to Realtime DB (continuing in offline mode):', dbError)
+        // Don't fail the registration if Firebase DB write fails - user is already saved locally
+      }
     }
 
     return {
