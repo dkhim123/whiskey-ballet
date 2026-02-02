@@ -155,39 +155,51 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
       >
         {/* Sticky Header with Logo */}
         <div
-          className={`sticky top-0 z-10 border-b border-[#D4AF37]/20 flex items-center justify-between bg-linear-to-b from-[#2C1810] via-[#1a0f0a] to-[#2C1810] ${
+          className={`sticky top-0 z-10 relative border-b border-[#D4AF37]/20 bg-linear-to-b from-[#2C1810] via-[#1a0f0a] to-[#2C1810] ${
             isOpen ? "p-6 min-h-[84px]" : "p-4 min-h-[84px]"
           }`}
         >
-          {isOpen ? (
-            <div className="flex items-center gap-3.5 flex-1 min-w-0">
-              <BrandBadge size="lg" />
-              <div className="flex flex-col justify-center leading-tight flex-1 min-w-0">
-                <h2 className="text-lg font-semibold text-[#F5F5DC] tracking-tight truncate">
-                  Whiskey Ballet
-                </h2>
-                <p className="text-xs text-[#F5F5DC]/60 tracking-wide truncate">
-                  Wines & Spirits{storageMode === 'desktop' ? " • Desktop" : ""}
-                </p>
+          <div className="h-full w-full">
+            {isOpen ? (
+              <div className="flex items-center gap-3.5 flex-1 min-w-0">
+                <BrandBadge size="lg" />
+                <div className="flex flex-col justify-center leading-tight flex-1 min-w-0">
+                  <h2 className="text-lg font-semibold text-[#F5F5DC] tracking-tight truncate">
+                    Whiskey Ballet
+                  </h2>
+                  <p className="text-xs text-[#F5F5DC]/60 tracking-wide truncate">
+                    Wines & Spirits{storageMode === 'desktop' ? " • Desktop" : ""}
+                  </p>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center flex-1">
-              <BrandBadge size="sm" />
-            </div>
+            ) : (
+              // Collapsed header: stack logo and toggle button vertically
+              // so the button never overlaps the logo.
+              <div className="h-full w-full flex flex-col items-center justify-center gap-3">
+                <BrandBadge size="sm" />
+                <button
+                  onClick={() => setIsOpen(!isOpen)}
+                  className="hidden lg:flex p-2.5 rounded-xl transition-all shadow-md hover:shadow-lg hover:scale-105 border bg-[#F5F5DC]/5 border-[#D4AF37]/25 hover:bg-[#F5F5DC]/10 hover:border-[#D4AF37]/40"
+                  title="Expand sidebar"
+                  aria-label="Expand sidebar"
+                >
+                  <MenuIcon className="w-5 h-5 text-[#F5F5DC]" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Expanded sidebar toggle stays on the right */}
+          {isOpen && (
+            <button
+              onClick={() => setIsOpen(!isOpen)}
+              className="hidden lg:flex p-2.5 rounded-xl transition-all shadow-md hover:shadow-lg hover:scale-105 border bg-[#F5F5DC]/5 border-[#D4AF37]/25 hover:bg-[#F5F5DC]/10 hover:border-[#D4AF37]/40 absolute right-4 top-1/2 -translate-y-1/2"
+              title="Collapse sidebar"
+              aria-label="Collapse sidebar"
+            >
+              <MenuIcon className="w-5 h-5 text-[#F5F5DC]" />
+            </button>
           )}
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            className={`hidden lg:flex p-2.5 rounded-xl transition-all shrink-0 shadow-md hover:shadow-lg hover:scale-105 border ${
-              isOpen
-                ? "bg-[#F5F5DC]/5 border-[#D4AF37]/25 hover:bg-[#F5F5DC]/10 hover:border-[#D4AF37]/40"
-                : "bg-[#F5F5DC]/5 border-[#D4AF37]/25 hover:bg-[#F5F5DC]/10 hover:border-[#D4AF37]/40"
-            }`}
-            title={isOpen ? "Collapse sidebar" : "Expand sidebar"}
-            aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
-          >
-            <MenuIcon className="w-5 h-5 text-[#F5F5DC]" />
-          </button>
         </div>
 
         {/* Scrollable Navigation - Hide scrollbar */}
