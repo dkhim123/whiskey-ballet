@@ -8,7 +8,7 @@ import AccountabilityModal from "../components/AccountabilityModal"
 import { readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
 import { subscribeToTransactions } from "../services/realtimeListeners"
-import { getTodayAtMidnight, formatTimeAgo } from "../utils/dateUtils"
+import { formatTimeAgo, isWithinLastMs } from "../utils/dateUtils"
 
 export default function CashierDashboard({ currentUser }) {
   const [dashboardData, setDashboardData] = useState({
@@ -31,21 +31,18 @@ export default function CashierDashboard({ currentUser }) {
         const sharedData = await readSharedData(adminId)
         const allTransactions = sharedData.transactions || []
         
-        // Filter transactions by cashier and branch
+        // Filter transactions by cashier (userId or cashierId, normalized) and branch
         const branchId = currentUser?.branchId
+        const norm = (v) => (v != null ? String(v).trim() : '')
         const transactions = allTransactions.filter(t => {
-          const matchesUser = t.userId === userId
-          const matchesBranch = branchId ? t.branchId === branchId : true
+          const matchesUser = norm(t.userId) === norm(userId) || norm(t.cashierId) === norm(userId)
+          const matchesBranch = !branchId || t.branchId === branchId
           return matchesUser && matchesBranch
         })
         
-        // Get today's transactions
-        const today = getTodayAtMidnight()
-        const todayTransactions = transactions.filter(t => {
-          const transDate = new Date(t.timestamp)
-          transDate.setHours(0, 0, 0, 0)
-          return transDate.getTime() === today.getTime()
-        })
+        // Get last 24h transactions (offline path: same logic as realtime so cards match)
+        const oneDayMs = 24 * 60 * 60 * 1000
+        const todayTransactions = transactions.filter(t => isWithinLastMs(t.timestamp, oneDayMs))
         
         // Calculate metrics
         const dailyTotal = todayTransactions.reduce((sum, t) => sum + (t.total ?? 0), 0)
@@ -93,21 +90,19 @@ export default function CashierDashboard({ currentUser }) {
     const unsub = subscribeToTransactions(adminId, (allTransactions) => {
       const userId = currentUser?.id
       if (!userId) return
+      const norm = (v) => (v != null ? String(v).trim() : '')
       const transactions = (allTransactions || []).filter((t) => {
-        const matchesUser = t.userId === userId
-        const matchesBranch = branchId ? t.branchId === branchId : true
+        const matchesUser = norm(t.userId) === norm(userId) || norm(t.cashierId) === norm(userId)
+        const matchesBranch = !branchId || t.branchId === branchId
         return matchesUser && matchesBranch
       })
 
-      const today = getTodayAtMidnight()
-      const todayTransactions = transactions.filter((t) => {
-        const transDate = new Date(t.timestamp)
-        transDate.setHours(0, 0, 0, 0)
-        return transDate.getTime() === today.getTime()
-      })
+      // Use last 24 hours so cards reflect recent sales (e.g. "3h ago")
+      const oneDayMs = 24 * 60 * 60 * 1000
+      const last24hTransactions = transactions.filter((t) => isWithinLastMs(t.timestamp, oneDayMs))
 
-      const dailyTotal = todayTransactions.reduce((sum, t) => sum + (t.total ?? 0), 0)
-      const transactionsCount = todayTransactions.length
+      const dailyTotal = last24hTransactions.reduce((sum, t) => sum + (t.total ?? 0), 0)
+      const transactionsCount = last24hTransactions.length
       const averageSale = transactionsCount > 0 ? Math.round(dailyTotal / transactionsCount) : 0
 
       const recentTransactions = transactions

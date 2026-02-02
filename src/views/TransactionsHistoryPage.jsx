@@ -6,7 +6,7 @@ import TopBar from "../components/TopBar"
 import AdminTrashBin from "../components/AdminTrashBin"
 import TransactionDetailsModal from "../components/TransactionDetailsModal"
 import BranchSelector from "../components/BranchSelector"
-import { getAdminIdForStorage } from "../utils/auth"
+import { getAdminIdForStorage, getAllUsers } from "../utils/auth"
 import { subscribeToTransactions, subscribeToUsersByBranch } from "../services/realtimeListeners"
 import { getAllBranches } from "../services/branchService"
 import { exportTransactionsToCSV } from "../utils/csvExport"
@@ -35,6 +35,9 @@ export default function TransactionsHistoryPage({ currentUser }) {
   const [cashiers, setCashiers] = useState([])
   // Resolved branch name for manager view (shows "Nakuru Branch" instead of branch ID)
   const [branchDisplayName, setBranchDisplayName] = useState('')
+  // For table and modal: resolve userId -> user, branchId -> name
+  const [branches, setBranches] = useState([])
+  const [userMap, setUserMap] = useState({})
 
   // Filter states
   const [dateFilter, setDateFilter] = useState('all') // 'today', 'week', 'month', 'all', 'custom'
@@ -125,6 +128,22 @@ export default function TransactionsHistoryPage({ currentUser }) {
       })
     return () => { cancelled = true }
   }, [currentUser?.role, currentUser?.branchId]);
+
+  // Load branches and users for table/modal (name, role, branch)
+  useEffect(() => {
+    if (!currentUser) return
+    const adminId = getAdminIdForStorage(currentUser)
+    let cancelled = false
+    Promise.all([getAllBranches(), getAllUsers(adminId)])
+      .then(([branchList, userList]) => {
+        if (cancelled) return
+        setBranches(branchList || [])
+        const map = (userList || []).reduce((m, u) => { m[u.id] = u; return m }, {})
+        setUserMap(map)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [currentUser?.id]);
 
   const handleCancelTransaction = async (transaction) => {
     try {
@@ -661,6 +680,9 @@ export default function TransactionsHistoryPage({ currentUser }) {
                         Amount
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-foreground uppercase tracking-wider">
+                        Branch
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-foreground uppercase tracking-wider">
                         Cashier
                       </th>
                     </tr>
@@ -715,8 +737,20 @@ export default function TransactionsHistoryPage({ currentUser }) {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="text-sm text-muted-foreground">
-                            {getFirstName(transaction.cashier || transaction.cashierName || 'N/A')}
+                            {transaction.branchId
+                              ? (branches.find(b => b.id === transaction.branchId)?.name || transaction.branchId)
+                              : '—'}
                           </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-foreground font-medium">
+                            {getFirstName(userMap[transaction.userId]?.name || transaction.cashierName || transaction.cashier || 'N/A')}
+                          </div>
+                          {userMap[transaction.userId]?.role && (
+                            <div className="text-xs text-muted-foreground capitalize">
+                              {userMap[transaction.userId].role}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -765,6 +799,11 @@ export default function TransactionsHistoryPage({ currentUser }) {
           currentUser={currentUser}
           onClose={() => setSelectedTransaction(null)}
           onCancel={handleCancelTransaction}
+          cashierName={userMap[selectedTransaction.userId]?.name || selectedTransaction.cashierName || selectedTransaction.cashier}
+          cashierRole={userMap[selectedTransaction.userId]?.role}
+          branchName={selectedTransaction.branchId
+            ? (branches.find(b => b.id === selectedTransaction.branchId)?.name || selectedTransaction.branchId)
+            : null}
         />
       )}
 

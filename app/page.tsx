@@ -1,7 +1,12 @@
 "use client"
 
 import App from "@/src/App"
+import AppErrorBoundary from "@/src/components/AppErrorBoundary"
 
 export default function Page() {
-  return <App />
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  )
 }

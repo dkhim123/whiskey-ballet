@@ -35,6 +35,7 @@ export default function ExpensesPage({ currentUser }) {
   const [dateRange, setDateRange] = useState('month') // today, week, month, all
   const [showAccountabilityModal, setShowAccountabilityModal] = useState(false)
   const [accountabilityType, setAccountabilityType] = useState(null)
+  const [showSummaryModal, setShowSummaryModal] = useState(false)
 
   // Realtime expenses + transactions (plain English):
   // - Two browsers should show the same numbers because both listen to Firebase.
@@ -529,22 +530,20 @@ export default function ExpensesPage({ currentUser }) {
           ))}
         </div>
 
-        {/* Stats Cards - accountability (click to open modal) only for cashiers */}
+        {/* Stats Cards - clickable for all roles to view details/summary */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div 
-            className={`bg-linear-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg transition-all ${currentUser?.role === 'cashier' ? 'hover:shadow-xl hover:scale-[1.02] cursor-pointer' : ''}`}
-            {...(currentUser?.role === 'cashier' ? {
-              onClick: () => { setAccountabilityType('sales'); setShowAccountabilityModal(true) },
-              role: 'button',
-              tabIndex: 0,
-              onKeyDown: (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  setAccountabilityType('sales')
-                  setShowAccountabilityModal(true)
-                }
+            className="bg-linear-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg transition-all hover:shadow-xl hover:scale-[1.02] cursor-pointer focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-green-600 rounded-xl"
+            role="button"
+            tabIndex={0}
+            onClick={() => { setAccountabilityType('sales'); setShowAccountabilityModal(true) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setAccountabilityType('sales')
+                setShowAccountabilityModal(true)
               }
-            } : {})}
+            }}
           >
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm opacity-90 font-medium">💰 Total Income</div>
@@ -563,21 +562,23 @@ export default function ExpensesPage({ currentUser }) {
                 <span className="font-semibold">KES {metrics.mpesaIncome.toLocaleString()}</span>
               </div>
             </div>
+            <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-end gap-1 text-xs opacity-90">
+              <span>View details</span>
+              <span aria-hidden>→</span>
+            </div>
           </div>
           <div 
-            className={`bg-linear-to-br from-red-500 to-red-600 text-white rounded-xl p-6 shadow-lg transition-all ${currentUser?.role === 'cashier' ? 'hover:shadow-xl hover:scale-[1.02] cursor-pointer' : ''}`}
-            {...(currentUser?.role === 'cashier' ? {
-              onClick: () => { setAccountabilityType('expenses'); setShowAccountabilityModal(true) },
-              role: 'button',
-              tabIndex: 0,
-              onKeyDown: (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  setAccountabilityType('expenses')
-                  setShowAccountabilityModal(true)
-                }
+            className="bg-linear-to-br from-red-500 to-red-600 text-white rounded-xl p-6 shadow-lg transition-all hover:shadow-xl hover:scale-[1.02] cursor-pointer focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-red-600 rounded-xl"
+            role="button"
+            tabIndex={0}
+            onClick={() => { setAccountabilityType('expenses'); setShowAccountabilityModal(true) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setAccountabilityType('expenses')
+                setShowAccountabilityModal(true)
               }
-            } : {})}
+            }}
           >
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm opacity-90 font-medium">💸 Total Expenses</div>
@@ -589,8 +590,23 @@ export default function ExpensesPage({ currentUser }) {
             <div className="text-sm opacity-90">
               {filteredExpenses.length} expense{filteredExpenses.length !== 1 ? 's' : ''} recorded
             </div>
+            <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-end gap-1 text-xs opacity-90">
+              <span>View details</span>
+              <span aria-hidden>→</span>
+            </div>
           </div>
-          <div className="bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg transition-all">
+          <div 
+            className="bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg transition-all hover:shadow-xl hover:scale-[1.02] cursor-pointer focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-blue-600 rounded-xl"
+            role="button"
+            tabIndex={0}
+            onClick={() => setShowSummaryModal(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setShowSummaryModal(true)
+              }
+            }}
+          >
             <div className="text-sm opacity-90 mb-3 font-medium">📊 Net Profit</div>
             <div className={`text-4xl font-bold mb-2`}>
               KES {(metrics.income - metrics.expenses).toLocaleString()}
@@ -615,6 +631,10 @@ export default function ExpensesPage({ currentUser }) {
                 </div>
               </div>
             )}
+            <div className="mt-3 pt-3 border-t border-white/20 flex items-center justify-end gap-1 text-xs opacity-90">
+              <span>View summary</span>
+              <span aria-hidden>→</span>
+            </div>
           </div>
         </div>
 
@@ -720,8 +740,8 @@ export default function ExpensesPage({ currentUser }) {
         />
       )}
 
-      {/* Accountability Modal - only available for cashiers */}
-      {currentUser?.role === 'cashier' && showAccountabilityModal && (
+      {/* Details modal - all roles can view income/expense breakdown */}
+      {showAccountabilityModal && (
         <AccountabilityModal
           type={accountabilityType}
           onClose={() => setShowAccountabilityModal(false)}
@@ -729,6 +749,53 @@ export default function ExpensesPage({ currentUser }) {
           currentUser={currentUser}
           selectedBranch={selectedBranch}
         />
+      )}
+
+      {/* Net Profit summary modal - shows formula and links to income/expense details */}
+      {showSummaryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowSummaryModal(false)}>
+          <div className="bg-card border border-border rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-foreground mb-2">Net Profit Summary</h3>
+            <p className="text-sm text-muted-foreground mb-4">For selected period ({dateRange})</p>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between py-2 border-b border-border">
+                <span className="text-muted-foreground">Total Income</span>
+                <span className="font-semibold text-foreground">KES {metrics.income.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between py-2 border-b border-border">
+                <span className="text-muted-foreground">Total Expenses</span>
+                <span className="font-semibold text-foreground">KES {metrics.expenses.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between py-3 font-bold text-foreground">
+                <span>Net Profit</span>
+                <span>KES {(metrics.income - metrics.expenses).toLocaleString()}</span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-6">
+              <button
+                type="button"
+                onClick={() => { setShowSummaryModal(false); setAccountabilityType('sales'); setShowAccountabilityModal(true) }}
+                className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
+              >
+                View income details
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowSummaryModal(false); setAccountabilityType('expenses'); setShowAccountabilityModal(true) }}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700"
+              >
+                View expense details
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSummaryModal(false)}
+                className="px-4 py-2 rounded-lg bg-muted text-foreground text-sm font-medium hover:bg-muted/80"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

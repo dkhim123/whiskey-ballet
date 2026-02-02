@@ -30,10 +30,24 @@ export function isToday(date) {
 }
 
 /**
+ * Get milliseconds since epoch from any timestamp format.
+ * Handles: Firestore Timestamp (object with .toDate or .seconds), ISO string, or number.
+ * Returns NaN if invalid.
+ */
+export function getTimestampMs(timestamp) {
+  if (timestamp == null) return NaN
+  // Firestore Timestamp: has .toDate() or .seconds
+  if (typeof timestamp?.toDate === 'function') return timestamp.toDate().getTime()
+  if (typeof timestamp?.seconds === 'number') return timestamp.seconds * 1000 + (timestamp.nanoseconds || 0) / 1e6
+  const d = new Date(timestamp)
+  return isNaN(d.getTime()) ? NaN : d.getTime()
+}
+
+/**
  * Format time ago from timestamp
  */
 export function formatTimeAgo(timestamp) {
-  const timeDiff = Date.now() - new Date(timestamp).getTime()
+  const timeDiff = Date.now() - getTimestampMs(timestamp)
   const minutes = Math.floor(timeDiff / 60000)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
@@ -42,6 +56,14 @@ export function formatTimeAgo(timestamp) {
   if (hours > 0) return `${hours}h ago`
   if (minutes > 0) return `${minutes} min ago`
   return 'Just now'
+}
+
+/**
+ * Check if a timestamp falls within the last N milliseconds (e.g. last 24h).
+ */
+export function isWithinLastMs(timestamp, ms) {
+  const ts = getTimestampMs(timestamp)
+  return !Number.isNaN(ts) && ts >= Date.now() - ms
 }
 
 /**

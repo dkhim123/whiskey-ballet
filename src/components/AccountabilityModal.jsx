@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { readSharedData, readData } from "../utils/storage"
 import { getAllUsers, getAdminIdForStorage } from "../utils/auth"
+import { getAllBranches } from "../services/branchService"
 import { exportTransactionsToCSV, exportExpensesToCSV } from "../utils/csvExport"
 
 // Constants for unknown user fallback values
@@ -24,32 +25,37 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
     const loadAccountabilityData = async () => {
       try {
         setLoading(true)
-        
-        // Get all users to map userId to user details
-        const users = await getAllUsers()
+        const adminId = getAdminIdForStorage(currentUser)
+        // Get all users for this org so we resolve name and role (fixes "Unknown User")
+        const users = await getAllUsers(adminId)
         const userMap = users.reduce((map, user) => {
           map[user.id] = user
           return map
         }, {})
+        const branches = await getAllBranches()
+        const branchMap = (branches || []).reduce((m, b) => { m[b.id] = b.name; return m }, {})
         
-        // Calculate date range
+        // Calculate date range (start of period so "this month" = current month)
         const now = new Date()
-        let startDate = new Date()
-        
+        let startDate
         switch (dateRange) {
           case 'today':
+            startDate = new Date(now)
             startDate.setHours(0, 0, 0, 0)
             break
           case 'week':
+            startDate = new Date(now)
             startDate.setDate(now.getDate() - 7)
+            startDate.setHours(0, 0, 0, 0)
             break
           case 'month':
-            startDate.setMonth(now.getMonth() - 1)
+            startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
             break
           case 'all':
             startDate = new Date(0)
             break
           default:
+            startDate = new Date(now)
             startDate.setHours(0, 0, 0, 0)
         }
         
@@ -73,11 +79,20 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
               matchesPaymentMethod = t.paymentMethod === 'mpesa'
             }
             
-            // For cashiers, only show their own transactions
-            const matchesUser = currentUser?.role === 'admin' || t.userId === currentUser?.id
+            // Admin: all; Manager: all transactions in their branch; Cashier: only their own (match userId or cashierId, normalized)
+            const norm = (v) => (v != null ? String(v).trim() : '')
+            const cashierIdMatch = norm(t.userId) === norm(currentUser?.id) || norm(t.cashierId) === norm(currentUser?.id)
+            const matchesUser = currentUser?.role === 'admin'
+              ? true
+              : currentUser?.role === 'manager'
+                ? (t.branchId === currentUser?.branchId)
+                : cashierIdMatch
             
-            // Filter by branch if selectedBranch is provided (for admin filtering)
-            const matchesBranch = !selectedBranch || t.branchId === selectedBranch
+            // Filter by branch if selectedBranch is provided (admin/manager branch filter); cashier sees own branch only
+            const branchOk = !selectedBranch || t.branchId === selectedBranch
+            const matchesBranch = currentUser?.role === 'cashier'
+              ? (!currentUser?.branchId || t.branchId === currentUser?.branchId)
+              : branchOk
             
             return matchesDate && isCompleted && matchesPaymentMethod && matchesUser && matchesBranch
           })
@@ -85,7 +100,7 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
           // Store filtered transactions for export
           setAllTransactions(filteredTransactions)
           
-          // Group transactions by userId using reduce
+          // Group transactions by userId; use name from user map or transaction.cashier (stored at sale time)
           const { salesByUser, total } = filteredTransactions.reduce((acc, transaction) => {
             const userId = transaction.userId
             const amount = transaction.total || 0
@@ -93,12 +108,13 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
             if (!acc.salesByUser[userId]) {
               acc.salesByUser[userId] = {
                 userId,
-                userName: userMap[userId]?.name || UNKNOWN_USER.name,
+                userName: userMap[userId]?.name || transaction.cashierName || transaction.cashier || UNKNOWN_USER.name,
                 userEmail: userMap[userId]?.email || UNKNOWN_USER.email,
                 userRole: userMap[userId]?.role || UNKNOWN_USER.role,
+                branchId: transaction.branchId,
                 totalEarnings: 0,
                 transactionCount: 0,
-                transactions: [] // Store actual transactions for details view
+                transactions: []
               }
             }
             
@@ -110,11 +126,15 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
             return acc
           }, { salesByUser: {}, total: 0 })
           
-          setAccountabilityData(Object.values(salesByUser))
+          const withBranchName = Object.values(salesByUser).map(u => ({
+            ...u,
+            branchName: branchMap[u.branchId] || u.branchId || '—'
+          }))
+          setAccountabilityData(withBranchName)
           setTotalAmount(total)
         } else if (type === 'expenses') {
-          // Load expenses from all users in parallel
-          const users = await getAllUsers()
+          // Load expenses from all users in this org
+          const users = await getAllUsers(adminId)
           
           // Fetch all user data in parallel using Promise.all
           const userDataPromises = users.map(user => 
@@ -299,8 +319,8 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-      <div className="bg-card rounded-lg shadow-2xl max-w-3xl w-full border-2 border-border max-h-[90vh] overflow-auto">
-        <div className="p-6 border-b border-border sticky top-0 bg-card z-10">
+      <div className="bg-card rounded-lg shadow-2xl max-w-3xl w-full border-2 border-border max-h-[90vh] flex flex-col">
+        <div className="p-6 border-b border-border flex-shrink-0 bg-card">
           <div className="flex items-start justify-between">
             <div className="flex-1">
               <h2 className="text-2xl font-bold text-foreground mb-1">{getTitle()}</h2>
@@ -326,7 +346,7 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
           </div>
         </div>
 
-        <div className="p-6">
+        <div className="p-6 flex-1 min-h-0 overflow-y-auto flex flex-col">
           {loading ? (
             <div className="text-center py-8">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
@@ -382,34 +402,30 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
                 </div>
               </div>
 
-              {/* User Breakdown */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-foreground mb-3">Breakdown by User</h3>
+              {/* User Breakdown - scrollable list for many users */}
+              <div className="flex-1 min-h-0 flex flex-col">
+                <h3 className="text-lg font-semibold text-foreground mb-3 flex-shrink-0">Breakdown by User</h3>
+                <div className="space-y-4 min-h-0 overflow-y-auto pr-1" style={{ maxHeight: '50vh' }}>
                 {accountabilityData.map((userData, index) => (
                   <div
                     key={userData.userId}
-                    className="bg-muted/40 border border-border rounded-lg overflow-hidden"
+                    className="bg-muted/40 border border-border rounded-lg overflow-hidden flex-shrink-0"
                   >
                     <div 
                       className="p-5 hover:bg-muted/60 transition-colors cursor-pointer"
                       onClick={() => setExpandedUserId(expandedUserId === userData.userId ? null : userData.userId)}
                     >
-                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-start justify-between mb-2">
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <h4 className="text-lg font-semibold text-foreground">{userData.userName}</h4>
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                              userData.userRole === 'admin' 
-                                ? 'bg-purple-500/20 text-purple-700 dark:text-purple-300' 
-                                : 'bg-blue-500/20 text-blue-700 dark:text-blue-300'
-                            }`}>
-                              {userData.userRole}
-                            </span>
+                            {(type === 'sales' || type === 'cash' || type === 'mpesa') && userData.branchName && userData.branchName !== '—' && (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">
+                                📍 {userData.branchName}
+                              </span>
+                            )}
                           </div>
-                          <p className="text-sm text-muted-foreground mb-1">
-                            📧 {userData.userEmail}
-                          </p>
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                             {type === 'sales' || type === 'cash' || type === 'mpesa'
                               ? `${userData.transactionCount} transaction${userData.transactionCount !== 1 ? 's' : ''}`
                               : type === 'expenses'
@@ -417,11 +433,11 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
                               : `Sales: KES ${(userData.totalSales || 0).toLocaleString()}, Expenses: KES ${(userData.totalExpenses || 0).toLocaleString()}`
                             }
                             <span className="text-xs ml-2">
-                              {expandedUserId === userData.userId ? '▼' : '▶'} Click to {expandedUserId === userData.userId ? 'hide' : 'view'} details
+                              {expandedUserId === userData.userId ? '▼' : '▶'} {expandedUserId === userData.userId ? 'Hide' : 'View'} details
                             </span>
                           </p>
                         </div>
-                      <div className="text-right">
+                      <div className="text-right flex-shrink-0">
                         <p className="text-sm text-muted-foreground mb-1">
                           {type === 'sales' || type === 'cash' || type === 'mpesa' ? 'Earnings' : type === 'expenses' ? 'Expenses' : 'Net Profit'}
                         </p>
@@ -500,12 +516,13 @@ export default function AccountabilityModal({ type, onClose, dateRange = 'today'
                     )}
                   </div>
                 ))}
+                </div>
               </div>
             </>
           )}
         </div>
 
-        <div className="p-6 border-t border-border bg-muted/20">
+        <div className="p-6 border-t border-border bg-muted/20 flex-shrink-0">
           <button
             onClick={onClose}
             className="w-full px-4 py-2 bg-secondary hover:bg-secondary/90 text-secondary-foreground rounded-lg font-semibold transition-colors"

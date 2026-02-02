@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { toast } from "sonner"
 
-export default function TransactionDetailsModal({ transaction, onClose, onCancel, currentUser }) {
+export default function TransactionDetailsModal({ transaction, onClose, onCancel, currentUser, cashierName, cashierRole, branchName }) {
   const [isCancelling, setIsCancelling] = useState(false)
 
   if (!transaction) return null
@@ -96,11 +96,27 @@ export default function TransactionDetailsModal({ transaction, onClose, onCancel
           </div>
           <div className="space-y-1">
             <p className="text-sm text-muted-foreground">
-              Transaction ID: <span className="font-mono font-semibold text-foreground">{transaction.id}</span>
-            </p>
-            <p className="text-sm text-muted-foreground">
               Date: <span className="font-semibold text-foreground">{formatDateTime(transaction.timestamp)}</span>
             </p>
+            {(cashierName || cashierRole || branchName) && (
+              <div className="flex flex-wrap gap-x-4 gap-y-1 pt-2 border-t border-border/50 mt-2">
+                {cashierName && (
+                  <p className="text-sm text-muted-foreground">
+                    Cashier: <span className="font-semibold text-foreground">{cashierName}</span>
+                  </p>
+                )}
+                {cashierRole && (
+                  <p className="text-sm text-muted-foreground">
+                    Role: <span className="font-semibold text-foreground capitalize">{cashierRole}</span>
+                  </p>
+                )}
+                {branchName && (
+                  <p className="text-sm text-muted-foreground">
+                    Branch: <span className="font-semibold text-foreground">{branchName}</span>
+                  </p>
+                )}
+              </div>
+            )}
             {transaction.cancelledAt && (
               <p className="text-sm text-destructive">
                 Cancelled: <span className="font-semibold">{formatDateTime(transaction.cancelledAt)}</span> by {transaction.cancelledBy || 'Admin'}

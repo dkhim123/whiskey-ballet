@@ -1,13 +1,17 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import dynamic from "next/dynamic"
 import TopBar from "../components/TopBar"
-import ReportsChart from "../components/ReportsChart"
 import ReportsFilters from "../components/ReportsFilters"
-import BranchSelector from "../components/BranchSelector"
 import { getAdminIdForStorage } from "../utils/auth"
+import { getTimestampMs } from "../utils/dateUtils"
 import { subscribeToTransactions, subscribeToInventory } from "../services/realtimeListeners"
 import { convertToCSV, downloadCSV } from "../utils/csvExport"
+
+// Load chart (recharts) only on client to avoid ChunkLoadError with Turbopack
+const ReportsChart = dynamic(() => import("../components/ReportsChart"), { ssr: false })
+import BranchSelector from "../components/BranchSelector"
 
 export default function ReportsPage({ currentUser }) {
   const [reportData, setReportData] = useState({
@@ -44,30 +48,36 @@ export default function ReportsPage({ currentUser }) {
     let transactions = [];
     let inventory = [];
     const updateReport = () => {
-      // Filter transactions by date range
+      // Filter transactions by date range (same logic as AccountabilityModal: current month = this month)
       const now = new Date();
-      let startDate = new Date();
+      let startDate;
       switch (dateRange) {
         case 'today':
+          startDate = new Date(now);
           startDate.setHours(0, 0, 0, 0);
           break;
         case 'week':
+          startDate = new Date(now);
           startDate.setDate(now.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
           break;
         case 'month':
-          startDate.setMonth(now.getMonth() - 1);
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
           break;
         default:
+          startDate = new Date(now);
           startDate.setHours(0, 0, 0, 0);
       }
       const filteredTransactions = transactions.filter(t => {
-        const transDate = new Date(t.timestamp);
+        const transMs = getTimestampMs(t.timestamp);
         // Only include completed transactions or transactions without status (backward compatibility)
-        const dateMatch = transDate >= startDate && (t.paymentStatus === 'completed' || !t.paymentStatus);
-        // Apply branch filter for cashiers or when admin selects a branch
+        const dateMatch = !Number.isNaN(transMs) && transMs >= startDate.getTime() && (t.paymentStatus === 'completed' || !t.paymentStatus);
+        // Branch filter: admin by selectedBranch, manager/cashier by their branch
         let branchMatch = true;
         if (currentUser.role === 'cashier') {
-          branchMatch = t.branchId === currentUser.branchId;
+          branchMatch = !currentUser.branchId || t.branchId === currentUser.branchId;
+        } else if (currentUser.role === 'manager') {
+          branchMatch = !currentUser.branchId || t.branchId === currentUser.branchId;
         } else if (currentUser.role === 'admin' && selectedBranch) {
           branchMatch = t.branchId === selectedBranch;
         }
@@ -126,11 +136,12 @@ export default function ReportsPage({ currentUser }) {
         const dayName = days[date.getDay()];
         dailySalesMap[dayName] = 0;
       }
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
       filteredTransactions.forEach(t => {
-        const date = new Date(t.timestamp);
-        if (date >= new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)) {
-          const dayName = days[date.getDay()];
-          dailySalesMap[dayName] += t.total;
+        const transMs = getTimestampMs(t.timestamp);
+        if (!Number.isNaN(transMs) && transMs >= sevenDaysAgo) {
+          const dayName = days[new Date(transMs).getDay()];
+          dailySalesMap[dayName] = (dailySalesMap[dayName] || 0) + (t.total ?? 0);
         }
       });
       const dailySalesData = Object.entries(dailySalesMap).map(([date, sales]) => ({
@@ -151,7 +162,7 @@ export default function ReportsPage({ currentUser }) {
       });
     };
     unsubTransactions = subscribeToTransactions(adminId, (data) => {
-      transactions = data;
+      transactions = data || [];
       updateReport();
     });
     unsubInventory = subscribeToInventory(adminId, (data) => {
