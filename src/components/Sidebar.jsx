@@ -17,6 +17,34 @@ import ThemeToggle from "./ThemeToggle"
 import { getStorageMode } from "../utils/storage"
 import { getFirstName } from "../utils/nameHelpers"
 
+function BrandBadge({ size = "lg" }) {
+  const [imgOk, setImgOk] = useState(true)
+  const sizeClass = size === "sm" ? "w-10 h-10" : "w-12 h-12"
+  const textClass = size === "sm" ? "text-lg" : "text-xl"
+  const shapeClass = "rounded-xl"
+
+  return (
+    // overflow-hidden is IMPORTANT:
+    // some SVGs are wider than the box; without clipping they "spill" and look like multiple logos.
+    <div className={`${sizeClass} ${shapeClass} overflow-hidden flex items-center justify-center shrink-0`}>
+      {imgOk ? (
+        <img
+          src="/cellar-logo-badge.svg"
+          alt="Whiskey Ballet Logo"
+          className="w-full h-full object-contain"
+          onError={() => setImgOk(false)}
+        />
+      ) : (
+        <div
+          className={`${sizeClass} bg-linear-to-br from-[#D4AF37] to-[#B8941F] ${shapeClass} flex items-center justify-center shadow-lg`}
+        >
+          <span className={`text-[#2C1810] ${textClass} font-bold`}>WB</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Sidebar({ currentPage, onPageChange, userRole, currentUser, onLogout }) {
   const [isOpen, setIsOpen] = useState(true)
   const [isMobile, setIsMobile] = useState(false)
@@ -99,7 +127,7 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
       {/* Mobile Menu Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-3 rounded-lg bg-[#6B0F1A] text-white shadow-xl hover:bg-[#8B1E2A] transition-all border-2 border-[#D4AF37]/40 hover:scale-105 active:scale-95"
+        className={`lg:hidden fixed top-4 ${isOpen ? "left-[17rem]" : "left-4"} z-50 p-2.5 rounded-xl bg-[#2C1810]/80 text-[#F5F5DC] shadow-xl hover:bg-[#2C1810] transition-all border border-[#D4AF37]/25 hover:border-[#D4AF37]/40 backdrop-blur-sm hover:scale-105 active:scale-95`}
         title={isOpen ? "Close menu" : "Open menu"}
         aria-label={isOpen ? "Close menu" : "Open menu"}
       >
@@ -126,58 +154,39 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
         `}
       >
         {/* Sticky Header with Logo */}
-        <div className="sticky top-0 z-10 p-6 border-b-2 border-[#D4AF37]/20 flex items-center justify-between min-h-20 bg-linear-to-b from-[#2C1810] via-[#1a0f0a] to-[#2C1810]">
+        <div
+          className={`sticky top-0 z-10 border-b border-[#D4AF37]/20 flex items-center justify-between bg-linear-to-b from-[#2C1810] via-[#1a0f0a] to-[#2C1810] ${
+            isOpen ? "p-6 min-h-[84px]" : "p-4 min-h-[84px]"
+          }`}
+        >
           {isOpen ? (
-            <div className="flex items-center gap-3 flex-1">
-              <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0">
-                <img
-                  src="/cellar-logo-badge.svg"
-                  alt="Whiskey Ballet Logo"
-                  className="w-12 h-12"
-                  onError={(e) => {
-                    e.target.style.display = 'none';
-                    const fallback = document.createElement('div');
-                    fallback.className = 'w-12 h-12 bg-linear-to-br from-[#D4AF37] to-[#B8941F] rounded-xl flex items-center justify-center shrink-0 shadow-lg';
-                    fallback.innerHTML = '<span class=\'text-[#2C1810] text-xl font-bold\'>WB</span>';
-                    e.target.parentElement.appendChild(fallback);
-                  }}
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h2 className="text-xl font-bold text-[#D4AF37]">Whiskey Ballet</h2>
-                <p className="text-xs text-[#F5F5DC]/70">
-                  Wines & Spirits
-                  {storageMode === 'desktop' && " • Desktop"}
+            <div className="flex items-center gap-3.5 flex-1 min-w-0">
+              <BrandBadge size="lg" />
+              <div className="flex flex-col justify-center leading-tight flex-1 min-w-0">
+                <h2 className="text-lg font-semibold text-[#F5F5DC] tracking-tight truncate">
+                  Whiskey Ballet
+                </h2>
+                <p className="text-xs text-[#F5F5DC]/60 tracking-wide truncate">
+                  Wines & Spirits{storageMode === 'desktop' ? " • Desktop" : ""}
                 </p>
               </div>
             </div>
           ) : (
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto shrink-0">
-              <img
-                src="/cellar-logo-badge.svg"
-                alt="Whiskey Ballet Logo"
-                className="w-12 h-12"
-                onError={(e) => {
-                  e.target.style.display = 'none';
-                  const fallback = document.createElement('div');
-                  fallback.className = 'w-10 h-10 bg-linear-to-br from-[#D4AF37] to-[#B8941F] rounded-full flex items-center justify-center';
-                  fallback.innerHTML = '<span class=\'text-[#2C1810] text-lg font-bold\'>WB</span>';
-                  e.target.parentElement.appendChild(fallback);
-                }}
-              />
+            <div className="flex items-center justify-center flex-1">
+              <BrandBadge size="sm" />
             </div>
           )}
           <button
             onClick={() => setIsOpen(!isOpen)}
-            className={`hidden lg:flex p-2.5 rounded-lg transition-all shrink-0 shadow-lg hover:shadow-xl hover:scale-105 ${
+            className={`hidden lg:flex p-2.5 rounded-xl transition-all shrink-0 shadow-md hover:shadow-lg hover:scale-105 border ${
               isOpen
-                ? "bg-[#D4AF37]/20 border-2 border-[#D4AF37]/50 hover:bg-[#D4AF37]/30"
-                : "bg-[#6B0F1A] border-2 border-[#D4AF37]/40 hover:bg-[#8B1E2A]"
+                ? "bg-[#F5F5DC]/5 border-[#D4AF37]/25 hover:bg-[#F5F5DC]/10 hover:border-[#D4AF37]/40"
+                : "bg-[#F5F5DC]/5 border-[#D4AF37]/25 hover:bg-[#F5F5DC]/10 hover:border-[#D4AF37]/40"
             }`}
             title={isOpen ? "Collapse sidebar" : "Expand sidebar"}
             aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
           >
-            <MenuIcon className={`w-5 h-5 ${isOpen ? "text-[#D4AF37]" : "text-[#F5F5DC]"}`} />
+            <MenuIcon className="w-5 h-5 text-[#F5F5DC]" />
           </button>
         </div>
 
