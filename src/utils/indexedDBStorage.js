@@ -13,7 +13,10 @@ const DB_NAME = 'WhiskeyBalletPOS'
 // v3: Data preservation improvements
 // v4: Branding updates and database stability fixes
 // v5: Added branches and users stores for multi-branch support
-const DB_VERSION = 5; // Updated to match existing database version
+// v6: Ensures adminId indexes exist (upgrade for older DBs)
+// v7: Added failedSync store for dead-letter sync queue
+// v8: Added syncQueue store (sync queue moved to IndexedDB)
+const DB_VERSION = 8;
 
 // Object store names
 const STORES = {
@@ -28,7 +31,9 @@ const STORES = {
   EXPENSES: 'expenses',
   SETTINGS: 'settings',
   BRANCHES: 'branches',
-  USERS: 'users'
+  USERS: 'users',
+  FAILED_SYNC: 'failedSync',
+  SYNC_QUEUE: 'syncQueue'
 }
 
 /**
@@ -187,6 +192,25 @@ const initDB = () => {
           console.log('✅ Created users store');
         }
 
+        // Failed sync store (version 7+) - dead-letter queue for failed sync operations
+        if (!db.objectStoreNames.contains(STORES.FAILED_SYNC)) {
+          db.createObjectStore(STORES.FAILED_SYNC, { keyPath: 'id' });
+          console.log('✅ Created failedSync store');
+        }
+
+        // Sync queue store (version 8+) - active sync queue moved from localStorage to IndexedDB
+        if (!db.objectStoreNames.contains(STORES.SYNC_QUEUE)) {
+          const syncQueueStore = db.createObjectStore(STORES.SYNC_QUEUE, { keyPath: 'id' });
+          syncQueueStore.createIndex('adminId', 'adminId', { unique: false });
+          console.log('✅ Created syncQueue store');
+        } else {
+          const syncQueueStore = event.target.transaction.objectStore(STORES.SYNC_QUEUE);
+          if (!syncQueueStore.indexNames.contains('adminId')) {
+            syncQueueStore.createIndex('adminId', 'adminId', { unique: false });
+            console.log('✅ Added adminId index to syncQueue store');
+          }
+        }
+
         console.log('✅ All IndexedDB stores created successfully');
       };
 
@@ -222,6 +246,149 @@ const getDB = async () => {
     console.error('❌ Failed to get DB connection:', error)
     throw error
   }
+}
+
+/**
+ * Sync queue helpers (active queue in IndexedDB)
+ * - Stored in STORES.SYNC_QUEUE with keyPath "id"
+ * - Each record includes an adminId for scoping
+ */
+const getSyncQueue = async (adminId) => {
+  const db = await getDB()
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction([STORES.SYNC_QUEUE], 'readonly')
+      const store = tx.objectStore(STORES.SYNC_QUEUE)
+
+      const hasAdminIndex = store.indexNames.contains('adminId')
+      const req =
+        adminId != null && adminId !== ''
+          ? (hasAdminIndex ? store.index('adminId').getAll(adminId) : store.getAll())
+          : store.getAll()
+
+      req.onerror = () => {
+        console.error('❌ Error reading sync queue:', req.error)
+      }
+
+      tx.oncomplete = () => {
+        let items = Array.isArray(req.result) ? req.result : []
+        // Fallback filter if index was missing or adminId not provided
+        if (adminId != null && adminId !== '') {
+          items = items.filter((x) => x && x.adminId === adminId)
+        }
+        db.close()
+        resolve(items)
+      }
+
+      tx.onerror = () => {
+        console.error('❌ Sync queue read transaction error:', tx.error)
+        db.close()
+        resolve([])
+      }
+    } catch (e) {
+      console.error('❌ Sync queue read error:', e)
+      db.close()
+      resolve([])
+    }
+  })
+}
+
+const clearSyncQueue = async (adminId) => {
+  const db = await getDB()
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction([STORES.SYNC_QUEUE], 'readwrite')
+      const store = tx.objectStore(STORES.SYNC_QUEUE)
+      const hasAdminIndex = store.indexNames.contains('adminId')
+
+      const cursorReq =
+        adminId != null && adminId !== ''
+          ? (hasAdminIndex ? store.index('adminId').openCursor(adminId) : store.openCursor())
+          : store.openCursor()
+
+      cursorReq.onsuccess = (event) => {
+        const cursor = event.target.result
+        if (cursor) {
+          const value = cursor.value
+          if (adminId == null || adminId === '' || (value && value.adminId === adminId) || hasAdminIndex) {
+            cursor.delete()
+          }
+          cursor.continue()
+        }
+      }
+      cursorReq.onerror = () => {
+        console.error('❌ Sync queue clear cursor error:', cursorReq.error)
+      }
+
+      tx.oncomplete = () => {
+        db.close()
+        resolve(true)
+      }
+      tx.onerror = () => {
+        console.error('❌ Sync queue clear transaction error:', tx.error)
+        db.close()
+        resolve(false)
+      }
+    } catch (e) {
+      console.error('❌ Sync queue clear error:', e)
+      db.close()
+      resolve(false)
+    }
+  })
+}
+
+const saveSyncQueue = async (adminId, queueItems) => {
+  if (adminId == null || adminId === '') {
+    console.warn('⚠️ saveSyncQueue called without adminId; refusing to write')
+    return false
+  }
+
+  const db = await getDB()
+
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction([STORES.SYNC_QUEUE], 'readwrite')
+      const store = tx.objectStore(STORES.SYNC_QUEUE)
+      const hasAdminIndex = store.indexNames.contains('adminId')
+
+      // Replace semantics for this adminId: delete existing, then write the provided array
+      const cursorReq = hasAdminIndex ? store.index('adminId').openCursor(adminId) : store.openCursor()
+
+      cursorReq.onsuccess = (event) => {
+        const cursor = event.target.result
+        if (cursor) {
+          if (hasAdminIndex || (cursor.value && cursor.value.adminId === adminId)) {
+            cursor.delete()
+          }
+          cursor.continue()
+        } else {
+          for (const item of Array.isArray(queueItems) ? queueItems : []) {
+            if (!item || !item.id) continue
+            store.put({ ...item, adminId })
+          }
+        }
+      }
+      cursorReq.onerror = () => {
+        console.error('❌ Sync queue save cursor error:', cursorReq.error)
+      }
+
+      tx.oncomplete = () => {
+        db.close()
+        resolve(true)
+      }
+      tx.onerror = () => {
+        console.error('❌ Sync queue save transaction error:', tx.error)
+        db.close()
+        resolve(false)
+      }
+    } catch (e) {
+      console.error('❌ Sync queue save error:', e)
+      db.close()
+      resolve(false)
+    }
+  })
 }
 
 /**
@@ -291,16 +458,10 @@ const putBatch = async (storeName, adminId, items) => {
       const transaction = db.transaction([storeName], 'readwrite')
       const store = transaction.objectStore(storeName)
       
-      // Verify index exists
-      if (!store.indexNames.contains('adminId')) {
-        const error = new Error(`Index "adminId" does not exist in store "${storeName}"`)
-        console.error(`❌ ${error.message}`)
-        db.close()
-        reject(error)
-        return
-      }
-      
-      const index = store.index('adminId')
+      // Some older databases may lack the adminId index (even if DB version matches).
+      // In that case, fall back to a full scan delete rather than hard-failing.
+      const hasAdminIndex = store.indexNames.contains('adminId')
+      const index = hasAdminIndex ? store.index('adminId') : null
       
       let deleteCount = 0
       let successCount = 0
@@ -308,15 +469,22 @@ const putBatch = async (storeName, adminId, items) => {
       let clearingComplete = false
       
       // STEP 1: Clear all existing items for this admin using cursor
-      const clearRequest = index.openCursor(adminId)
+      // - Fast path: adminId index exists
+      // - Fallback: scan entire store and delete matching adminId
+      const clearRequest = hasAdminIndex ? index.openCursor(adminId) : store.openCursor()
       
       clearRequest.onsuccess = (event) => {
         try {
           const cursor = event.target.result
           if (cursor) {
-            // Still have items to delete
-            cursor.delete()
-            deleteCount++
+            // Still have items to delete (or scan)
+            if (hasAdminIndex) {
+              cursor.delete()
+              deleteCount++
+            } else if (cursor.value && cursor.value.adminId === adminId) {
+              cursor.delete()
+              deleteCount++
+            }
             cursor.continue() // Move to next item
           } else {
             // Cursor reached the end - clearing is complete
@@ -393,7 +561,31 @@ const getItem = async (storeName, adminId, id) => {
       const transaction = db.transaction([storeName], 'readonly')
       const store = transaction.objectStore(storeName)
       
-      const request = store.get([adminId, id])
+      // Different stores use different keyPaths:
+      // - Some are composite keys: [adminId, id]
+      // - Some are single keys: id
+      // - Settings uses adminId as the keyPath
+      let key
+      const compositeKeyStores = new Set([
+        STORES.SUPPLIERS,
+        STORES.PURCHASE_ORDERS,
+        STORES.GOODS_RECEIVED_NOTES,
+        STORES.SUPPLIER_PAYMENTS,
+        STORES.STOCK_ADJUSTMENTS,
+        STORES.CUSTOMERS,
+        STORES.EXPENSES,
+      ])
+
+      if (storeName === STORES.SETTINGS) {
+        key = adminId
+      } else if (compositeKeyStores.has(storeName)) {
+        key = [adminId, id]
+      } else {
+        // INVENTORY, TRANSACTIONS, BRANCHES, USERS use single-key "id"
+        key = id
+      }
+
+      const request = store.get(key)
       
       request.onsuccess = () => resolve(request.result || null)
       request.onerror = () => {
@@ -433,24 +625,50 @@ const getAllItems = async (storeName, adminId, includeDeleted = false) => {
     try {
       const transaction = db.transaction([storeName], 'readonly')
       const store = transaction.objectStore(storeName)
-      const index = store.index('adminId')
-      
-      const request = index.getAll(adminId)
-      
-      request.onsuccess = () => {
-        let items = request.result || []
-        
-        // Filter out soft-deleted items unless includeDeleted is true
-        if (!includeDeleted) {
-          items = items.filter(item => !item.deletedAt)
+
+      const hasAdminIndex = store.indexNames.contains('adminId')
+
+      if (hasAdminIndex) {
+        const index = store.index('adminId')
+        const request = index.getAll(adminId)
+
+        request.onsuccess = () => {
+          let items = request.result || []
+
+          // Filter out soft-deleted items unless includeDeleted is true
+          if (!includeDeleted) {
+            items = items.filter(item => !item.deletedAt)
+          }
+
+          console.log(`📦 IndexedDB: Retrieved ${items.length} items from ${storeName} for adminId: ${adminId}${includeDeleted ? ' (including deleted)' : ''}`)
+          resolve(items)
         }
-        
-        console.log(`📦 IndexedDB: Retrieved ${items.length} items from ${storeName} for adminId: ${adminId}${includeDeleted ? ' (including deleted)' : ''}`)
-        resolve(items)
-      }
-      request.onerror = () => {
-        console.error(`❌ Error getting all items from ${storeName}:`, request.error)
-        reject(request.error)
+        request.onerror = () => {
+          console.error(`❌ Error getting all items from ${storeName}:`, request.error)
+          reject(request.error)
+        }
+      } else {
+        // Fallback for older DBs without the adminId index: scan the store.
+        const items = []
+        const request = store.openCursor()
+        request.onsuccess = (event) => {
+          const cursor = event.target.result
+          if (cursor) {
+            const value = cursor.value
+            if (value && value.adminId === adminId) {
+              items.push(value)
+            }
+            cursor.continue()
+          } else {
+            const filtered = includeDeleted ? items : items.filter(item => !item.deletedAt)
+            console.log(`📦 IndexedDB: Retrieved ${filtered.length} items from ${storeName} for adminId: ${adminId}${includeDeleted ? ' (including deleted)' : ''} (scan fallback)`)
+            resolve(filtered)
+          }
+        }
+        request.onerror = () => {
+          console.error(`❌ Error scanning items from ${storeName}:`, request.error)
+          reject(request.error)
+        }
       }
       
       transaction.oncomplete = () => db.close()
@@ -549,16 +767,20 @@ const clearAdminData = async (storeName, adminId) => {
     try {
       const transaction = db.transaction([storeName], 'readwrite')
       const store = transaction.objectStore(storeName)
-      const index = store.index('adminId')
-      
-      const request = index.openCursor(adminId)
+      const hasAdminIndex = store.indexNames.contains('adminId')
+      const request = hasAdminIndex ? store.index('adminId').openCursor(adminId) : store.openCursor()
       let deleteCount = 0
       
       request.onsuccess = (event) => {
         const cursor = event.target.result
         if (cursor) {
-          cursor.delete()
-          deleteCount++
+          if (hasAdminIndex) {
+            cursor.delete()
+            deleteCount++
+          } else if (cursor.value && cursor.value.adminId === adminId) {
+            cursor.delete()
+            deleteCount++
+          }
           cursor.continue()
         }
       }
@@ -619,17 +841,33 @@ const getDeletedItems = async (storeName, adminId) => {
     try {
       const transaction = db.transaction([storeName], 'readonly')
       const store = transaction.objectStore(storeName)
-      const index = store.index('adminId')
+      const hasAdminIndex = store.indexNames.contains('adminId')
+      const request = hasAdminIndex ? store.index('adminId').getAll(adminId) : store.openCursor()
       
-      const request = index.getAll(adminId)
-      
-      request.onsuccess = () => {
-        const allItems = request.result || []
-        // Filter to only include soft-deleted items
-        const deletedItems = allItems.filter(item => item.deletedAt != null)
-        
-        console.log(`🗑️ IndexedDB: Retrieved ${deletedItems.length} deleted items from ${storeName} for adminId: ${adminId}`)
-        resolve(deletedItems)
+      if (hasAdminIndex) {
+        request.onsuccess = () => {
+          const allItems = request.result || []
+          // Filter to only include soft-deleted items
+          const deletedItems = allItems.filter(item => item.deletedAt != null)
+          
+          console.log(`🗑️ IndexedDB: Retrieved ${deletedItems.length} deleted items from ${storeName} for adminId: ${adminId}`)
+          resolve(deletedItems)
+        }
+      } else {
+        const deletedItems = []
+        request.onsuccess = (event) => {
+          const cursor = event.target.result
+          if (cursor) {
+            const value = cursor.value
+            if (value && value.adminId === adminId && value.deletedAt != null) {
+              deletedItems.push(value)
+            }
+            cursor.continue()
+          } else {
+            console.log(`🗑️ IndexedDB: Retrieved ${deletedItems.length} deleted items from ${storeName} for adminId: ${adminId} (scan fallback)`)
+            resolve(deletedItems)
+          }
+        }
       }
       request.onerror = () => {
         console.error(`❌ Error getting deleted items from ${storeName}:`, request.error)
@@ -915,6 +1153,9 @@ export {
   STORES,
   initDB,
   getDB,
+  getSyncQueue,
+  saveSyncQueue,
+  clearSyncQueue,
   putItem,
   putBatch,
   getItem,

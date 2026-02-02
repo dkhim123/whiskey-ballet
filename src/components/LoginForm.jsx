@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { clearLocalDataIfSafe } from "../utils/clearLocalData"
+import { clearLocalStorageKeys } from "../utils/clearLocalData"
 import { Eye, EyeOff } from "lucide-react"
 import { authenticateUser, validateEmail } from "../utils/auth"
 import SignUpModal from "./SignUpModal"
@@ -57,11 +57,12 @@ export default function LoginForm({ onLogin }) {
           return
         }
 
-        // Clear local branch data to prevent old data from showing for new accounts
+        // Clear *session/branch selection* keys to prevent cross-account leakage.
+        // IMPORTANT: do not delete IndexedDB or all localStorage here, otherwise offline data/users are lost.
         try {
-          await clearLocalDataIfSafe()
+          clearLocalStorageKeys()
         } catch (e) {
-          console.warn('Error clearing local branch data:', e);
+          console.warn('Error clearing local session keys:', e)
         }
 
         // Show role confirmation message

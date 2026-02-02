@@ -82,6 +82,7 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
       ]
 
   const commonSettingsItems = [
+    { id: "profile", label: "My Profile", icon: UsersIcon },
     { id: "user-guide", label: "User Guide", icon: HelpIcon },
   ]
   const adminMenuItems = userRole === "admin"

@@ -98,6 +98,8 @@ import {
   getStorageInfo as getIndexedDBStorageInfo
 } from './indexedDBStorage'
 import { isMigrationCompleted } from './migrationUtility'
+import { isFirebaseConfigured } from '../config/firebase'
+import { readSharedDataOnline, writeSharedDataOnline } from './firebaseStorageOnline'
 
 const STORAGE_KEY_PREFIX = 'whiskeyballet-pos-data'
 const SHARED_STORAGE_KEY = 'whiskeyballet-pos-shared-data' // New shared storage key
@@ -411,8 +413,23 @@ export const readSharedData = async (adminId = null, includeDeleted = false) => 
           }
         })
       }
-    } else if (shouldUseIndexedDB()) {
-      // Web mode with IndexedDB (PRIMARY STORAGE - supports 10,000+ items and 3+ years data)
+    } else {
+      // Web mode
+
+      // Firebase-first read: when configured, treat Firebase as primary source when online.
+      // The Firebase reader will automatically fall back to IndexedDB when offline.
+      if (typeof window !== 'undefined' && isFirebaseConfigured()) {
+        try {
+          data = await readSharedDataOnline(adminId, includeDeleted)
+        } catch (firebaseReadError) {
+          console.warn('Firebase read failed, falling back to local storage:', firebaseReadError)
+          data = null
+        }
+      }
+
+      // If Firebase wasn't configured or failed, fall back to local stores
+      if (!data && shouldUseIndexedDB()) {
+        // Web mode with IndexedDB (PRIMARY LOCAL STORAGE - supports 10,000+ items and 3+ years data)
       try {
         data = {
           inventory: await getAllItems(STORES.INVENTORY, adminId, includeDeleted),
@@ -466,22 +483,23 @@ export const readSharedData = async (adminId = null, includeDeleted = false) => 
           })
         }
       }
-    } else {
-      // Web mode with localStorage: read from admin-specific or shared localStorage key
-      const storageKey = adminId ? `${STORAGE_KEY_PREFIX}-admin-${adminId}` : SHARED_STORAGE_KEY
-      const stored = localStorage.getItem(storageKey)
-      data = stored ? JSON.parse(stored) : getDefaultData()
-      
-      // Filter deleted items if needed (localStorage stores all items)
-      if (!includeDeleted && data) {
-        const storesToFilter = ['inventory', 'transactions', 'suppliers', 'purchaseOrders', 
-                               'goodsReceivedNotes', 'supplierPayments', 'stockAdjustments', 
-                               'customers', 'expenses']
-        storesToFilter.forEach(store => {
-          if (Array.isArray(data[store])) {
-            data[store] = data[store].filter(item => !item.deletedAt)
-          }
-        })
+      } else if (!data) {
+        // Web mode with localStorage: read from admin-specific or shared localStorage key
+        const storageKey = adminId ? `${STORAGE_KEY_PREFIX}-admin-${adminId}` : SHARED_STORAGE_KEY
+        const stored = localStorage.getItem(storageKey)
+        data = stored ? JSON.parse(stored) : getDefaultData()
+        
+        // Filter deleted items if needed (localStorage stores all items)
+        if (!includeDeleted && data) {
+          const storesToFilter = ['inventory', 'transactions', 'suppliers', 'purchaseOrders', 
+                                 'goodsReceivedNotes', 'supplierPayments', 'stockAdjustments', 
+                                 'customers', 'expenses']
+          storesToFilter.forEach(store => {
+            if (Array.isArray(data[store])) {
+              data[store] = data[store].filter(item => !item.deletedAt)
+            }
+          })
+        }
       }
     }
     
@@ -534,7 +552,23 @@ export const writeSharedData = async (data, adminId = null) => {
       const fileKey = adminId ? `admin-${adminId}` : 'shared'
       const result = await window.electronAPI.writeData(data, fileKey)
       return result.success
-    } else if (shouldUseIndexedDB()) {
+    }
+
+    // Web mode: if Firebase is configured, treat it as primary storage when online.
+    // If the network is down, this still writes to IndexedDB and queues operations for sync.
+    if (typeof window !== 'undefined' && isFirebaseConfigured()) {
+      try {
+        await writeSharedDataOnline(data, adminId)
+        return true
+      } catch (firebaseWriteError) {
+        // Important: writeSharedDataOnline already cached locally and queued for retry.
+        // We return true to avoid breaking flows/UI.
+        console.warn('Firebase write failed (data cached locally and queued for sync):', firebaseWriteError)
+        return true
+      }
+    }
+
+    if (shouldUseIndexedDB()) {
       // Web mode with IndexedDB: write to IndexedDB stores
       console.log('🗄️ Attempting IndexedDB write...')
       try {
@@ -712,7 +746,7 @@ export const getStorageInfo = async () => {
  * This is a one-time migration for transactions created before paymentStatus was added
  * @returns {Promise<{success: boolean, migrated: number}>}
  */
-export const migrateTransactionsPaymentStatus = async () => {
+export const migrateTransactionsPaymentStatus = async (adminId = null) => {
   const MIGRATION_FLAG_KEY = 'whiskeyballet-payment-status-migration-done'
   
   try {
@@ -721,7 +755,8 @@ export const migrateTransactionsPaymentStatus = async () => {
       return { success: true, migrated: 0, alreadyMigrated: true }
     }
     
-    const data = await readSharedData()
+    // IMPORTANT: migrations must run in the same admin-isolated namespace as the logged-in user
+    const data = await readSharedData(adminId)
     
     if (!data.transactions || !Array.isArray(data.transactions)) {
       // Mark as migrated even if no transactions exist
@@ -746,7 +781,7 @@ export const migrateTransactionsPaymentStatus = async () => {
       const success = await writeSharedData({
         ...data,
         transactions: updatedTransactions
-      })
+      }, adminId)
       
       if (success) {
         // Mark migration as completed

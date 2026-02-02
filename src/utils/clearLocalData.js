@@ -1,18 +1,32 @@
 // utils/clearLocalData.js
 // Central utility to clear all local data (IndexedDB + localStorage) safely
 
-import db from './database'
-
 const INDEXEDDB_NAME = 'WhiskeyBalletPOS'
+const SYNC_QUEUE_KEY = 'pos-sync-queue'
+const BRANCH_QUEUE_KEY = 'branch-offline-queue'
 
 /**
  * Checks if there are any pending offline writes (unsynced data)
  * Returns true if safe to clear, false if pending writes exist
  */
 export async function isSafeToClear() {
-  // Check SYNC_QUEUE for unsynced items
-  const unsynced = await db.getUnsyncedItems('sync_queue')
-  return !unsynced || unsynced.length === 0
+  // Important: this runs during login/logout. It must never hang.
+  // Our current sync system stores pending writes in localStorage.
+  try {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return true
+
+    const syncQueueRaw = localStorage.getItem(SYNC_QUEUE_KEY)
+    const syncQueue = syncQueueRaw ? JSON.parse(syncQueueRaw) : []
+
+    const branchQueueRaw = localStorage.getItem(BRANCH_QUEUE_KEY)
+    const branchQueue = branchQueueRaw ? JSON.parse(branchQueueRaw) : []
+
+    return (syncQueue?.length || 0) === 0 && (branchQueue?.length || 0) === 0
+  } catch (e) {
+    // If we can't read/parse the queues, assume it's NOT safe to wipe data.
+    console.warn('isSafeToClear failed; assuming NOT safe:', e)
+    return false
+  }
 }
 
 /**
@@ -36,8 +50,9 @@ export function clearIndexedDBAndStorage() {
     if (window.indexedDB) {
       const req = window.indexedDB.deleteDatabase(INDEXEDDB_NAME)
          req.onsuccess = function() { 
-           localStorage.clear(); 
-           if (typeof sessionStorage !== 'undefined') sessionStorage.clear(); 
+           // Do NOT nuke all localStorage; keep offline users and other app config.
+           clearLocalStorageKeys()
+           if (typeof sessionStorage !== 'undefined') sessionStorage.clear();
            resolve(true); 
       }
          req.onerror = function() { reject(req.error) }
@@ -52,13 +67,22 @@ export function clearIndexedDBAndStorage() {
  * Main function to clear all local data, only if safe (no pending sync)
  * Returns true if cleared, false if not safe
  */
-export async function clearLocalDataIfSafe() {
+export async function clearLocalDataIfSafe(options = { deleteIndexedDB: false }) {
   const safe = await isSafeToClear()
   if (!safe) {
     alert('Cannot clear local data: pending offline sync. Please connect to the internet and sync first.')
     return false
   }
-  await clearIndexedDBAndStorage()
+
+  // Default behavior: only clear *session/branch* keys (fast, cannot hang).
+  // Deleting IndexedDB is an explicit opt-in.
+  clearLocalStorageKeys()
+  if (typeof sessionStorage !== 'undefined') sessionStorage.clear()
+
+  if (options?.deleteIndexedDB) {
+    await clearIndexedDBAndStorage()
+  }
+
   return true
 }
 
@@ -66,6 +90,7 @@ export async function clearLocalDataIfSafe() {
  * Force clear all local data (use with caution, may lose unsynced data)
  */
 export async function forceClearLocalData() {
+  // Force clear deletes IndexedDB too (may lose unsynced data)
   await clearIndexedDBAndStorage()
   return true
 }

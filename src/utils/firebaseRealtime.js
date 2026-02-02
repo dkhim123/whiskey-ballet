@@ -45,7 +45,15 @@ export function writeEntityToRealtimeDB(entityType, entity) {
 }
 
 // For compatibility with old imports
-export const writeUserToRealtimeDB = (user) => writeEntityToRealtimeDB('users', user)
+export const writeUserToRealtimeDB = (user) => {
+  // Safety: never send password material to the cloud database
+  // (even hashed passwords shouldn't be stored in RTDB)
+  const safeUser = { ...(user || {}) }
+  delete safeUser.password
+  delete safeUser.passwordHash
+
+  return writeEntityToRealtimeDB('users', safeUser)
+}
 
 // Generic read function for any entity
 import { get, child } from "firebase/database"

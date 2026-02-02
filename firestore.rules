@@ -1,14 +1,133 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow users to read/write their own user profile
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function isSignedIn() {
+      return request.auth != null;
     }
-    // Add more granular rules for other collections as needed
-    // Example: allow only authenticated users to read/write other collections
+
+    // --- Helpers (avoid repeated reads + handle missing profile safely) ---
+    function myProfilePath() {
+      return /databases/$(database)/documents/userProfiles/$(request.auth.uid);
+    }
+
+    function hasProfile() {
+      return isSignedIn() && exists(myProfilePath());
+    }
+
+    // Read current user's profile once (used for org + branch isolation)
+    function myProfile() {
+      return hasProfile() ? get(myProfilePath()).data : null;
+    }
+
+    function myAdminId() {
+      return myProfile().adminId;
+    }
+
+    function myRole() {
+      return myProfile().role;
+    }
+
+    function myBranchId() {
+      return myProfile().branchId;
+    }
+
+    function isAdmin() {
+      return hasProfile() && myRole() == 'admin';
+    }
+
+    // Global user profile mapping (uid -> adminId/branch/role)
+    match /userProfiles/{uid} {
+      allow read: if isSignedIn() && (
+        request.auth.uid == uid ||
+        (isAdmin() && resource.data.adminId == myAdminId())
+      );
+
+      // Prevent privilege escalation:
+      // - Users may only update basic personal fields on their own profile.
+      // - Users cannot change role/adminId/branchId/permissions or other org-scoping fields.
+      // - Only admins can create/update role/adminId/branchId within their org.
+
+      // Admin can create profiles inside their org.
+      allow create: if isAdmin() && request.resource.data.adminId == myAdminId();
+
+      // Admin can delete profiles inside their org.
+      allow delete: if isAdmin() && resource.data.adminId == myAdminId();
+
+      // Updates: admin full control in-org; user limited self-update.
+      allow update: if isSignedIn() && (
+        // Admin can update any profile within their org
+        (isAdmin() &&
+          resource.data.adminId == myAdminId() &&
+          request.resource.data.adminId == myAdminId()
+        )
+        ||
+        // User can only update their own "basic profile" fields
+        (request.auth.uid == uid &&
+          // Must not change security-sensitive fields
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.adminId == resource.data.adminId &&
+          request.resource.data.branchId == resource.data.branchId &&
+          // If a permissions object exists, it must remain unchanged
+          (!('permissions' in resource.data) || request.resource.data.permissions == resource.data.permissions) &&
+          // Only allow edits to a small set of non-privileged fields
+          request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'name',
+            'email',
+            'photoURL',
+            'avatarUrl',
+            'updatedAt',
+            'lastLoginAt'
+          ])
+        )
+      );
+    }
+
+    // Admin-only settings document
+    match /organizations/{adminId}/settings/config {
+      allow read, write: if isAdmin() && myAdminId() == adminId;
+    }
+
+    // Primary data model:
+    // organizations/{adminId}/{collection}/{doc}
+    match /organizations/{adminId}/{collectionName}/{docId} {
+      // Reads
+      allow get: if hasProfile() && myAdminId() == adminId && (
+        // Admin sees everything in their org
+        isAdmin() ||
+        // Cashier/manager restricted to their branch
+        resource.data.branchId == myBranchId()
+      );
+
+      // IMPORTANT:
+      // Rules are not filters. This `list` rule forces non-admin queries to include
+      // a branchId constraint (otherwise the query could return other branches).
+      allow list: if hasProfile() && myAdminId() == adminId && (
+        isAdmin() ||
+        resource.data.branchId == myBranchId()
+      );
+
+      // Writes
+      allow create: if hasProfile() && myAdminId() == adminId && (
+        isAdmin() ||
+        request.resource.data.branchId == myBranchId()
+      );
+
+      allow update: if hasProfile() && myAdminId() == adminId && (
+        isAdmin() ||
+        // Non-admin can only update docs in their branch and cannot move docs between branches
+        (resource.data.branchId == myBranchId() &&
+         request.resource.data.branchId == resource.data.branchId)
+      );
+
+      allow delete: if hasProfile() && myAdminId() == adminId && (
+        isAdmin() ||
+        resource.data.branchId == myBranchId()
+      );
+    }
+
+    // Default deny (tighten by adding explicit matches above)
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

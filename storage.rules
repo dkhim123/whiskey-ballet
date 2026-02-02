@@ -1,0 +1,25 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Org-isolated avatars
+    // Path: organizations/{adminId}/avatars/{uid}/{fileName}
+    match /organizations/{adminId}/avatars/{uid}/{fileName} {
+      // READ: only users whose token adminId matches this org folder
+      allow read: if request.auth != null
+                  && request.auth.token.adminId == adminId;
+
+      // WRITE: only the owner, inside their org folder, plus validations
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && request.auth.token.adminId == adminId
+                   && request.resource.size < 2 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
+    // Default deny for everything else
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+

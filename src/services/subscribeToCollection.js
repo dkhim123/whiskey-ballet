@@ -3,7 +3,7 @@
 //   db, collectionPath, adminId, onUpdate, onError
 // })
 
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 /**
  * Subscribe to a Firestore collection for a specific admin (real-time updates)
@@ -16,11 +16,17 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
  * @returns {function} Unsubscribe function
  */
 export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, onError }) {
-  if (db && typeof window !== 'undefined' && db.type === 'firestore') {
-    const colRef = collection(db, collectionPath);
-    const q = query(colRef, where('adminId', '==', adminId));
+  // Firestore instances don't have a stable `type` field; the previous check caused
+  // realtime subscriptions to be skipped and forced IndexedDB fallback.
+  //
+  // This app's canonical cloud path is:
+  //   organizations/{adminId}/{collectionPath}
+  //
+  // (adminId is already encoded in the path, so no `where('adminId','==',...)` needed)
+  if (db && typeof window !== 'undefined' && adminId) {
+    const colRef = collection(db, 'organizations', adminId, collectionPath);
     const unsubscribe = onSnapshot(
-      q,
+      colRef,
       (snapshot) => {
         const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         onUpdate(data);
@@ -39,6 +45,8 @@ export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, o
       if (storeName === 'inventory') storeName = STORES.INVENTORY;
       if (storeName === 'customers') storeName = STORES.CUSTOMERS;
       if (storeName === 'branches') storeName = STORES.BRANCHES;
+      if (storeName === 'users') storeName = STORES.USERS;
+      if (storeName === 'settings') storeName = STORES.SETTINGS;
       getAllItems(storeName, adminId).then(items => {
         // Strict adminId filtering (defense-in-depth)
           const filtered = (items || []).filter(item => item.adminId === adminId);

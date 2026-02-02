@@ -5,8 +5,9 @@
 
 import bcrypt from 'bcryptjs'
 import { writeUserToRealtimeDB, readEntityFromRealtimeDB } from './firebaseRealtime'
-import { auth, isFirebaseConfigured } from '../config/firebase'
+import { auth, db, isFirebaseConfigured } from '../config/firebase'
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 
 const USERS_STORAGE_KEY = 'pos-users-db'
 const SALT_ROUNDS = 10
@@ -257,11 +258,37 @@ export const authenticateUser = async (email, password) => {
       let userCredential
       try {
         userCredential = await signInWithEmailAndPassword(auth, sanitizedEmail, password)
-        // Fetch user profile from Firebase Realtime DB (users/{uid})
         const user = userCredential.user
+
+        // Firebase-first user profile lookup:
+        // We require a provisioned profile so admins can monitor cashiers by branch/org.
+        // (No more "random Firebase Auth user defaults to cashier".)
         let userProfile = null
+
+        // 1) Firestore mapping/profile (preferred)
+        if (db) {
+          try {
+            const profileSnap = await Promise.race([
+              getDoc(doc(db, 'userProfiles', user.uid)),
+              new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+            ])
+            if (profileSnap && profileSnap.exists && profileSnap.exists()) {
+              userProfile = profileSnap.data()
+            }
+          } catch (e) {
+            // ignore and fall back
+          }
+        }
+
+        // 2) Legacy Realtime DB (users/{uid})
         try {
-          userProfile = await readEntityFromRealtimeDB('users', user.uid)
+          // Guard against RTDB hangs (misconfigured databaseURL, permissions, regional routing, etc.)
+          if (!userProfile) {
+            userProfile = await Promise.race([
+              readEntityFromRealtimeDB('users', user.uid),
+              new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+            ])
+          }
         } catch (e) {
           // ignore
         }
@@ -277,21 +304,49 @@ export const authenticateUser = async (email, password) => {
             // ignore
           }
         }
+
+        // If user authenticated with Firebase but has no profile, block login.
+        // This prevents "self-registered cashier" accounts that admins cannot monitor/isolate.
+        if (!userProfile) {
+          return {
+            success: false,
+            error:
+              'This account is not provisioned for POS access yet. Ask your administrator to create/assign your account and branch.',
+          }
+        }
+
         return {
           success: true,
           user: {
-            id: userProfile?.id || user.uid,
+            // Use Firebase UID as the canonical id for cloud-backed accounts
+            id: userProfile?.uid || user.uid,
             email: user.email,
-            role: userProfile?.role || 'cashier',
+            role: userProfile?.role,
             name: userProfile?.name || user.displayName || '',
             createdBy: userProfile?.createdBy || null,
-            branchId: userProfile?.branchId || null
+            branchId: userProfile?.branchId || null,
+            adminId: userProfile?.adminId || null
           },
           firebaseAuth: true
         }
       } catch (firebaseError) {
         // Firebase Auth failed, try offline fallback
-        console.log('Firebase Auth failed, trying offline authentication')
+        console.log('Firebase Auth failed, trying offline authentication', firebaseError?.code || firebaseError)
+
+        // Give a clearer message for the most common misconfiguration:
+        // Email/Password provider disabled or API key restrictions.
+        if (firebaseError?.code === 'auth/operation-not-allowed') {
+          return {
+            success: false,
+            error: 'Firebase email/password sign-in is disabled. Enable "Email/Password" in Firebase Auth providers.',
+          }
+        }
+        if (firebaseError?.code === 'auth/api-key-not-valid' || firebaseError?.code === 'auth/invalid-api-key') {
+          return {
+            success: false,
+            error: 'Firebase API key is being rejected. Check API key restrictions and that this key matches the project.',
+          }
+        }
       }
     }
     
@@ -401,8 +456,10 @@ export const registerUser = async (name, email, password, role, createdBy = null
     // Optionally, add user to local storage for offline reference (not for login)
     const passwordHash = await hashPassword(password)
     const newUserId = users.length > 0 ? Math.max(...users.map(u => u.id)) + 1 : 1
+    const firebaseUid = authUser?.user?.uid || null
     const newUser = {
       id: newUserId,
+      firebaseUid,
       email: sanitizedEmail,
       passwordHash,
       role: sanitizedRole,
@@ -424,13 +481,43 @@ export const registerUser = async (name, email, password, role, createdBy = null
       // Don't fail the registration if storage write fails - user can still use Firebase Auth
     }
 
-    // Also write user to Firebase Realtime Database if configured
+    // Write user profile to Firestore (preferred) so admin can monitor in real-time.
+    // Also keep legacy RTDB write for backward compatibility.
+    if (firebaseConfigured && firebaseUid && db) {
+      try {
+        // Determine the org/adminId for cloud storage
+        const adminIdForCloud = sanitizedRole === 'admin' ? firebaseUid : createdBy
+        const profile = {
+          uid: firebaseUid,
+          adminId: adminIdForCloud,
+          email: sanitizedEmail,
+          role: sanitizedRole,
+          name: sanitizedName,
+          isActive: true,
+          createdBy: createdBy,
+          branchId: branchId || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: serverTimestamp(),
+        }
+
+        // Global profile/mapping (lets the user locate their org/adminId)
+        await setDoc(doc(db, 'userProfiles', firebaseUid), profile, { merge: true })
+
+        // Org-scoped users collection (used by admin dashboard realtime listeners)
+        if (adminIdForCloud) {
+          await setDoc(doc(db, 'organizations', adminIdForCloud, 'users', firebaseUid), profile, { merge: true })
+        }
+      } catch (firestoreError) {
+        console.warn('Error writing user profile to Firestore (continuing):', firestoreError)
+      }
+    }
+
+    // Legacy: write to Firebase Realtime Database if configured
     if (firebaseConfigured) {
       try {
         await writeUserToRealtimeDB(newUser)
       } catch (dbError) {
         console.warn('Error writing user to Realtime DB (continuing in offline mode):', dbError)
-        // Don't fail the registration if Firebase DB write fails
       }
     }
 
@@ -520,6 +607,7 @@ export const getAllUsers = async (adminId = null) => {
   
   return filteredUsers.map(user => ({
     id: user.id,
+    firebaseUid: user.firebaseUid || null,
     email: user.email,
     role: user.role,
     name: user.name,
@@ -560,8 +648,37 @@ export const updateUserPassword = async (email, oldPassword, newPassword) => {
     // Hash new password
     const newPasswordHash = await hashPassword(newPassword)
     users[userIndex].passwordHash = newPasswordHash
+    users[userIndex].updatedAt = new Date().toISOString()
     
     await saveUsersToStorage(users)
+
+    // IMPORTANT (plain English):
+    // - We can update the offline/local password hash here (used for offline login on THIS device).
+    // - We CANNOT securely reset another user's Firebase Auth password from a browser-only app.
+    //   That requires a trusted backend (Firebase Admin SDK / Cloud Function) or the Firebase Console.
+    //
+    // Still, we *do* write a "passwordUpdatedAt" marker to Firestore so admins can audit changes.
+    // If you truly want the hashed password stored in Firebase too, we store ONLY the bcrypt hash
+    // (never the plain password).
+    try {
+      const firebaseConfigured = isFirebaseConfigured()
+      const targetFirebaseUid = users[userIndex].firebaseUid
+      const currentSessionUser = JSON.parse(localStorage.getItem('currentUser') || '{}')
+      const adminIdForCloud = currentSessionUser?.adminId || currentSessionUser?.id || null
+
+      if (firebaseConfigured && db && targetFirebaseUid && adminIdForCloud) {
+        const patch = {
+          passwordUpdatedAt: serverTimestamp(),
+          // Store hash (not plain password) so the "main DB" reflects the change.
+          // NOTE: This is still sensitive data—protect with strict Firestore rules.
+          passwordHash: newPasswordHash,
+        }
+        await setDoc(doc(db, 'userProfiles', targetFirebaseUid), patch, { merge: true })
+        await setDoc(doc(db, 'organizations', adminIdForCloud, 'users', targetFirebaseUid), patch, { merge: true })
+      }
+    } catch (firestoreError) {
+      console.warn('Password updated locally but failed to update Firestore profile:', firestoreError)
+    }
     
     return { success: true, message: 'Password updated successfully' }
   } catch (error) {
@@ -617,12 +734,31 @@ export const updateUserBranch = async (userId, branchId, adminEmail) => {
     
     console.log('📝 Updating user:', users[userIndex].name, 'with branchId:', branchId)
     
-    // Update the branch assignment
+    // Update the branch assignment (local/offline)
     users[userIndex].branchId = branchId
     users[userIndex].updatedAt = new Date().toISOString()
     
     const saved = await saveUsersToStorage(users)
     console.log('💾 Save result:', saved)
+
+    // Also update Firestore profile if this user has a Firebase UID (real-time admin monitoring)
+    try {
+      const firebaseConfigured = isFirebaseConfigured()
+      const currentSessionUser = JSON.parse(localStorage.getItem('currentUser') || '{}')
+      const adminIdForCloud = currentSessionUser?.adminId || currentSessionUser?.id || null
+      const targetFirebaseUid = users[userIndex].firebaseUid
+
+      if (firebaseConfigured && db && adminIdForCloud && targetFirebaseUid) {
+        const patch = {
+          branchId,
+          updatedAt: serverTimestamp(),
+        }
+        await setDoc(doc(db, 'userProfiles', targetFirebaseUid), patch, { merge: true })
+        await setDoc(doc(db, 'organizations', adminIdForCloud, 'users', targetFirebaseUid), patch, { merge: true })
+      }
+    } catch (firestoreError) {
+      console.warn('Failed to update user branch in Firestore (local update still applied):', firestoreError)
+    }
     
     return { success: true, message: 'Branch assigned successfully', user: users[userIndex] }
   } catch (error) {

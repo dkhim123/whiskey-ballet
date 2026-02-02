@@ -54,8 +54,10 @@ export function subscribeToBranches(onUpdate, onError) {
  */
 
 import { db, isFirebaseConfigured } from '../config/firebase';
-import { collection, doc, setDoc, updateDoc, deleteDoc, query, where, onSnapshot } from 'firebase/firestore';
-import { getDB, STORES } from '../utils/indexedDBStorage';
+import { collection, doc, setDoc, updateDoc, deleteDoc, query, where, onSnapshot, getDocs } from 'firebase/firestore';
+import { getDB, STORES, putItem } from '../utils/indexedDBStorage';
+import syncManager from '../utils/syncManager';
+import { loadSession } from '../utils/session';
 
 const STORAGE_KEY = 'pos-branches';
 const COLLECTION_NAME = 'branches';
@@ -70,8 +72,23 @@ let listenersInitialized = false;
  * Get current admin ID from localStorage
  */
 function getCurrentAdminId() {
-  const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-  return currentUser.adminId || currentUser.id;
+  try {
+    const currentUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
+    if (currentUser?.adminId || currentUser?.id) return currentUser.adminId || currentUser.id;
+  } catch (e) {
+    // ignore
+  }
+
+  // Fallback to the persisted session (used by App)
+  try {
+    const session = loadSession()
+    const u = session?.user
+    if (u?.adminId || u?.id) return u.adminId || u.id
+  } catch (e) {
+    // ignore
+  }
+
+  return null
 }
 
 /**
@@ -101,13 +118,8 @@ function saveBranchLocally(branch) {
  */
 async function saveBranchToIndexedDB(branch) {
   try {
-    const indexedDb = await getDB();
-    const tx = indexedDb.transaction(STORES.BRANCHES, 'readwrite');
-    const store = tx.objectStore(STORES.BRANCHES);
-    
-    await store.put(branch);
-    await tx.done;
-    
+    const adminId = branch?.adminId || getCurrentAdminId();
+    await putItem(STORES.BRANCHES, adminId, branch);
     return true;
   } catch (error) {
     console.error('Error saving branch to IndexedDB:', error);
@@ -119,33 +131,55 @@ async function saveBranchToIndexedDB(branch) {
  * Save branch to Firebase Firestore
  */
 async function saveBranchToFirebase(branch) {
-  // Temporarily disable Firebase to avoid errors
-  return false;
-  
-  /* Firebase sync disabled - uncomment when ready
-  if (!isFirebaseConfigured() || !db) {
-    console.warn('Firebase not configured, skipping cloud sync');
-    return false;
-  }
+  const adminId = branch?.adminId || getCurrentAdminId();
 
   try {
-    const adminId = getCurrentAdminId();
+    // If Firebase isn't configured or we're offline, queue and return
+    if (!isFirebaseConfigured() || !db || !navigator.onLine) {
+      syncManager.addToQueue({
+        type: 'update',
+        collection: COLLECTION_NAME,
+        docId: branch.id,
+        data: branch,
+        adminId,
+      });
+      return false;
+    }
+
     const branchRef = doc(db, 'organizations', adminId, COLLECTION_NAME, branch.id);
-    
-    await setDoc(branchRef, {
-      ...branch,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
-    
+
+    await setDoc(
+      branchRef,
+      {
+        ...branch,
+        adminId, // enforce isolation
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
     console.log('✅ Branch synced to Firebase:', branch.name);
     return true;
   } catch (error) {
     console.error('Error saving branch to Firebase:', error);
-    // Add to offline queue
-    offlineQueue.push({ action: 'save', data: branch });
+
+    // Queue for retry on reconnect
+    try {
+      syncManager.addToQueue({
+        type: 'update',
+        collection: COLLECTION_NAME,
+        docId: branch.id,
+        data: branch,
+        adminId,
+      });
+    } catch (queueError) {
+      console.warn('Failed to add branch operation to sync queue:', queueError);
+      // Keep legacy queue as last-resort fallback
+      offlineQueue.push({ action: 'save', data: branch });
+    }
+
     return false;
   }
-  */
 }
 
 /**
@@ -170,8 +204,7 @@ export async function createBranch(branchData) {
   // Save to all storage layers
   saveBranchLocally(branch);
   await saveBranchToIndexedDB(branch);
-  // Firebase temporarily disabled
-  // await saveBranchToFirebase(branch);
+  await saveBranchToFirebase(branch);
 
   console.log('✅ Branch created:', branch.name);
   return branch;
@@ -185,8 +218,27 @@ export async function getAllBranches() {
   const adminId = getCurrentAdminId();
   
   try {
-    // Firebase temporarily disabled - using IndexedDB only
-    
+    if (!adminId) {
+      console.warn('getAllBranches: missing adminId (no active session/user)')
+      return []
+    }
+
+    // Firebase-first: prefer cloud when available, fallback to IndexedDB/localStorage
+    if (isFirebaseConfigured() && db && navigator.onLine) {
+      const branchesCol = collection(db, 'organizations', adminId, COLLECTION_NAME);
+      const snapshot = await getDocs(branchesCol);
+      const branches = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const active = branches.filter((b) => b.adminId === adminId && b.isActive);
+
+      // Warm local caches (best effort)
+      active.forEach((b) => {
+        saveBranchLocally(b);
+        saveBranchToIndexedDB(b);
+      });
+
+      return active;
+    }
+
     // Load from IndexedDB
     const indexedDb = await getDB();
     const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
@@ -250,7 +302,12 @@ export function subscribeToBranch(branchId, onUpdate, onError) {
         const indexedDb = await getDB();
         const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
         const store = tx.objectStore(STORES.BRANCHES);
-        const branch = await store.get(branchId);
+        const getRequest = store.get(branchId);
+        const branch = await new Promise((resolve, reject) => {
+          getRequest.onsuccess = () => resolve(getRequest.result);
+          getRequest.onerror = () => reject(getRequest.error);
+        });
+
         if (branch && branch.adminId === adminId) {
           onUpdate(branch);
         } else {
@@ -353,6 +410,27 @@ export async function deleteBranch(branchId) {
 export async function getBranchCashiers(branchId) {
   try {
     console.log('🔍 getBranchCashiers called with branchId:', branchId, typeof branchId);
+
+    const adminId = getCurrentAdminId()
+
+    // Prefer Firebase (real-time source of truth) when available
+    if (isFirebaseConfigured() && db && navigator.onLine && adminId) {
+      try {
+        const usersCol = collection(db, 'organizations', adminId, 'users')
+        const q = query(
+          usersCol,
+          where('role', '==', 'cashier'),
+          where('branchId', '==', branchId),
+          where('isActive', '==', true)
+        )
+        const snap = await getDocs(q)
+        const cashiers = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        console.log('✅ Found', cashiers.length, 'cashiers for branch (Firebase)', branchId)
+        return cashiers
+      } catch (firebaseError) {
+        console.warn('⚠️ Firebase cashier lookup failed, falling back to local:', firebaseError)
+      }
+    }
     
     // Read users from localStorage (same key as auth.js)
     const USERS_STORAGE_KEY = 'pos-users-db';

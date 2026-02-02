@@ -91,7 +91,8 @@ export async function writeSharedDataOnline(data, adminId) {
           const chunk = store.items.slice(i, i + batchSize)
 
           for (const item of chunk) {
-            const docRef = doc(collectionRef, item.id)
+            // Firestore document IDs must be strings (CSV import uses numeric IDs)
+            const docRef = doc(collectionRef, String(item.id))
             batch.set(docRef, {
               ...item,
               adminId, // Ensure adminId is set
@@ -129,7 +130,7 @@ export async function writeSharedDataOnline(data, adminId) {
           syncManager.addToQueue({
             type: 'update',
             collection: store.name,
-            docId: item.id,
+            docId: String(item.id),
             data: item,
             adminId
           })
@@ -153,7 +154,7 @@ export async function writeSharedDataOnline(data, adminId) {
         syncManager.addToQueue({
           type: 'update',
           collection: store.name,
-          docId: item.id,
+          docId: String(item.id),
           data: item,
           adminId
         })
@@ -185,7 +186,8 @@ async function cacheToIndexedDB(data, adminId) {
 
     for (const store of stores) {
       if (store.items.length > 0) {
-        await putBatch(store.name, store.items, adminId)
+        // putBatch signature: (storeName, adminId, items)
+        await putBatch(store.name, adminId, store.items)
         console.log(`💾 Cached ${store.items.length} items to IndexedDB ${store.name}`)
       }
     }
@@ -378,7 +380,8 @@ export async function writeItemOnline(storeName, item, adminId) {
   if (isOnline() && isFirebaseConfigured() && db) {
     try {
       const collectionRef = collection(db, 'organizations', adminId, storeName)
-      const docRef = doc(collectionRef, item.id)
+      // Firestore document IDs must be strings (CSV import uses numeric IDs)
+      const docRef = doc(collectionRef, String(item.id))
       
       await setDoc(docRef, {
         ...item,
@@ -397,7 +400,7 @@ export async function writeItemOnline(storeName, item, adminId) {
       syncManager.addToQueue({
         type: 'update',
         collection: storeName,
-        docId: item.id,
+        docId: String(item.id),
         data: item,
         adminId
       })
@@ -414,7 +417,7 @@ export async function writeItemOnline(storeName, item, adminId) {
     syncManager.addToQueue({
       type: 'update',
       collection: storeName,
-      docId: item.id,
+      docId: String(item.id),
       data: item,
       adminId
     })
@@ -435,7 +438,8 @@ export async function deleteItemOnline(storeName, itemId, adminId) {
   if (isOnline() && isFirebaseConfigured() && db) {
     try {
       const collectionRef = collection(db, 'organizations', adminId, storeName)
-      const docRef = doc(collectionRef, itemId)
+      // Firestore document IDs must be strings
+      const docRef = doc(collectionRef, String(itemId))
       
       await setDoc(docRef, {
         deletedAt: serverTimestamp(),
@@ -456,7 +460,7 @@ export async function deleteItemOnline(storeName, itemId, adminId) {
       syncManager.addToQueue({
         type: 'delete',
         collection: storeName,
-        docId: itemId,
+        docId: String(itemId),
         adminId
       })
       
@@ -472,7 +476,7 @@ export async function deleteItemOnline(storeName, itemId, adminId) {
     syncManager.addToQueue({
       type: 'delete',
       collection: storeName,
-      docId: itemId,
+      docId: String(itemId),
       adminId
     })
     

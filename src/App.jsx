@@ -18,6 +18,7 @@ import UserGuidePage from "./views/UserGuidePage"
 import AdminSettingsPage from "./views/AdminSettingsPage"
 import BranchManagementPage from "./views/BranchManagementPage"
 import TransactionsHistoryPage from "./views/TransactionsHistoryPage"
+import ProfilePage from "./views/ProfilePage"
 import Sidebar from "./components/Sidebar"
 import ScrollArea from "./components/ScrollArea"
 import PWAInstallPrompt from "./components/PWAInstallPrompt"
@@ -142,9 +143,28 @@ export default function App() {
     // Save session using utility with user data
     saveSession(role, page, user)
     
+    // Get admin ID for storage (for cashiers/managers, uses their creator's ID)
+    // IMPORTANT: must be computed before any migrations/reads that require admin isolation.
+    const adminId = getAdminIdForStorage(user)
+
+    // Some services (e.g. branchService) read `currentUser` from localStorage.
+    // Keep it in sync with the active session to avoid "adminId undefined" crashes.
+    try {
+      localStorage.setItem(
+        'currentUser',
+        JSON.stringify({
+          ...(user || {}),
+          adminId, // explicit for easy access
+        })
+      )
+    } catch (e) {
+      // Non-fatal (e.g. storage blocked)
+      console.warn('Unable to persist currentUser to localStorage:', e)
+    }
+
     // Run one-time migration to fix transaction paymentStatus
     try {
-      const migrationResult = await migrateTransactionsPaymentStatus()
+      const migrationResult = await migrateTransactionsPaymentStatus(adminId)
       if (migrationResult.migrated > 0) {
         console.log(`✅ Migration: Fixed ${migrationResult.migrated} transactions`)
       }
@@ -152,9 +172,6 @@ export default function App() {
       console.error('Migration failed:', migrationError)
       // Don't block login if migration fails
     }
-    
-    // Get admin ID for storage (for cashiers/managers, uses their creator's ID)
-    const adminId = getAdminIdForStorage(user)
     
     // Pure offline: Load from admin-specific local storage only
     try {
@@ -205,9 +222,29 @@ export default function App() {
     clearSession()
     // Purge all local data if safe (no pending sync)
     try {
-      await clearLocalDataIfSafe()
+      // Keep IndexedDB data (offline-first). Only clear session/branch keys.
+      await clearLocalDataIfSafe({ deleteIndexedDB: false })
     } catch (e) {
       console.warn('Error clearing local data on logout:', e)
+    }
+  }
+
+  const handleUserUpdate = (patch) => {
+    if (!patch) return
+    const updatedUser = { ...(currentUser || {}), ...patch }
+    setCurrentUser(updatedUser)
+
+    try {
+      // Keep the session in sync so refresh restores the updated name/photo
+      saveSession(userRole, currentPage, updatedUser)
+    } catch (e) {
+      // ignore
+    }
+
+    try {
+      localStorage.setItem('currentUser', JSON.stringify(updatedUser))
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -239,6 +276,7 @@ export default function App() {
           {currentPage === "pos" && <PosPage key={currentUser?.id} inventory={inventory} onInventoryChange={setInventory} currentUser={currentUser} />}
           {currentPage === "inventory" && <InventoryPage key={currentUser?.id} inventory={inventory} onInventoryChange={setInventory} currentUser={currentUser} />}
           {currentPage === "customers" && <CustomersPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "profile" && <ProfilePage key={currentUser?.id} currentUser={currentUser} userRole={userRole} onUserUpdate={handleUserUpdate} />}
           {currentPage === "admin-dashboard" && <AdminDashboard key={currentUser?.id} currentUser={currentUser} onPageChange={(page) => {
             setCurrentPage(page)
             updateSessionPage(page)
