@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import { toast } from "sonner"
 import TopBar from "../components/TopBar"
-import { registerUser, getAllUsers, deactivateUser, getAdminIdForStorage } from "../utils/auth"
+import { registerUser, getAllUsers, deactivateUser, getAdminIdForStorage, validatePasswordStrength } from "../utils/auth"
 import { Users, UserPlus, UserX, Check, X } from "lucide-react"
 
 export default function BranchStaffPage({ currentUser }) {
@@ -107,6 +107,13 @@ export default function BranchStaffPage({ currentUser }) {
       }
       if (!newCashier.password.trim()) {
         toast.error('Please enter cashier password')
+        return
+      }
+
+      // Validate password strength
+      const passwordErrors = validatePasswordStrength(newCashier.password)
+      if (passwordErrors.length > 0) {
+        toast.error(passwordErrors[0])
         return
       }
 

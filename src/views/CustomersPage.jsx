@@ -109,7 +109,7 @@ export default function CustomersPage({ currentUser }) {
     try {
       const userId = currentUser?.id
       if (!userId) {
-        alert('User not authenticated')
+        toast.error('User not authenticated')
         return
       }
 
@@ -118,10 +118,13 @@ export default function CustomersPage({ currentUser }) {
       const allCustomers = sharedData.customers || []
       const updatedCustomers = allCustomers.map(c => {
         if (c.id === updatedCustomer.id) {
-          // Preserve or add branchId and createdBy if missing
+          // Preserve branchId - should already exist from creation
+          // Only fallback to current user's branch if somehow missing (data migration scenario)
+          const preservedBranchId = c.branchId || currentUser?.branchId
+          
           return {
             ...updatedCustomer,
-            branchId: updatedCustomer.branchId || c.branchId || currentUser?.branchId, // Preserve existing or use current
+            branchId: updatedCustomer.branchId || preservedBranchId,
             createdBy: c.createdBy || {
               id: currentUser?.id,
               name: currentUser?.name || currentUser?.email,

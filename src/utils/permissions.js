@@ -155,7 +155,7 @@ export const getEffectivePermissions = (user) => {
         const feature = permissionMap[key]
         // Only allow toggling if base role doesn't explicitly deny critical features
         // For example, admin can never get POS access via override
-        if (user.role !== 'admin' || !basePermissions[feature] === false) {
+        if (user.role !== 'admin' || basePermissions[feature] !== false) {
           basePermissions[feature] = user.permissions[key]
         }
       }
