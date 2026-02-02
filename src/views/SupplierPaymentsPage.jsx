@@ -93,7 +93,7 @@ export default function SupplierPaymentsPage({ currentUser }) {
         notes: newPayment.notes || `Payment reference: ${newPayment.reference || 'N/A'}`,
         linkedPayment: newPayment.id,
         linkedSupplier: newPayment.supplierId,
-        branchId: currentUser?.branchId || ''
+        branchId: currentUser?.branchId // Should already have branchId from validation above
       }
       const updatedExpenses = [...expenses, paymentExpense]
 
@@ -118,11 +118,17 @@ export default function SupplierPaymentsPage({ currentUser }) {
   }
 
   const handleRecordPayment = (paymentData) => {
+    // Block if cashier/manager has no branchId
+    if ((currentUser.role === 'cashier' || currentUser.role === 'manager') && !currentUser.branchId) {
+      alert('You must be assigned to a branch to record payments. Please contact your administrator.')
+      return
+    }
+
     const maxId = Math.max(...payments.map(p => p.id), 0)
     const paymentToAdd = {
       ...paymentData,
       id: maxId + 1,
-      branchId: currentUser?.branchId || '',
+      branchId: currentUser?.branchId, // No fallback - validated above
       paymentDate: new Date().toISOString(),
       recordedBy: currentUser?.name || currentUser?.email || "Unknown"
     }

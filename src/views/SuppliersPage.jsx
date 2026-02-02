@@ -42,11 +42,17 @@ export default function SuppliersPage({ currentUser }) {
   }
 
   const handleAddSupplier = (newSupplier) => {
+    // Block if cashier/manager has no branchId
+    if ((currentUser.role === 'cashier' || currentUser.role === 'manager') && !currentUser.branchId) {
+      alert('You must be assigned to a branch to create suppliers. Please contact your administrator.')
+      return
+    }
+
     const maxId = Math.max(...suppliers.map(s => s.id), 0)
     const supplierToAdd = {
       ...newSupplier,
       id: maxId + 1,
-      branchId: currentUser?.branchId || '',
+      branchId: currentUser?.branchId, // No fallback - validated above
       createdDate: new Date().toISOString(),
       totalPurchases: 0,
       outstandingBalance: 0
