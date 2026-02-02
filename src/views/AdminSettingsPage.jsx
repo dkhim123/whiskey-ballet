@@ -181,9 +181,9 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
     setLoading(true)
 
     try {
-      // Validate branch assignment for cashiers
-      if (newUserData.role === 'cashier' && !newUserData.branchId) {
-        setError("Please assign a branch for this cashier")
+      // Validate branch assignment for cashiers and managers
+      if ((newUserData.role === 'cashier' || newUserData.role === 'manager') && !newUserData.branchId) {
+        setError(`Please assign a branch for this ${newUserData.role}`)
         setLoading(false)
         return
       }
@@ -452,7 +452,7 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                             <span className="px-2 py-1 text-xs font-medium rounded-md bg-indigo-100 dark:bg-indigo-900/30 text-indigo-800 dark:text-indigo-300">
                               {branches.find(b => b.id === user.branchId)?.name || 'Unknown Branch'}
                             </span>
-                            {user.role === 'cashier' && (
+                            {(user.role === 'cashier' || user.role === 'manager') && (
                               <button
                                 onClick={() => {
                                   setSelectedUser(user)
@@ -466,7 +466,7 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                               </button>
                             )}
                           </div>
-                        ) : user.role === 'cashier' ? (
+                        ) : (user.role === 'cashier' || user.role === 'manager') ? (
                           <div className="flex items-center gap-2">
                             <span className="px-2 py-1 text-xs font-medium rounded-md bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 flex items-center gap-1">
                               ⚠️ No branch
@@ -505,7 +505,7 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                         >
                           🔑 Reset Password
                         </button>
-                        {user.role === 'cashier' && (
+                        {(user.role === 'cashier' || user.role === 'manager') && (
                           <button
                             onClick={() => {
                               setSelectedUser(user)
@@ -698,8 +698,8 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                 </select>
               </div>
 
-              {/* Branch Selection - Only for Cashiers */}
-              {newUserData.role === 'cashier' && (
+              {/* Branch Selection - For Cashiers and Managers */}
+              {(newUserData.role === 'cashier' || newUserData.role === 'manager') && (
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-2">
                     Assign to Branch <span className="text-red-500">*</span>
@@ -708,7 +708,7 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
                     value={newUserData.branchId}
                     onChange={(e) => setNewUserData({ ...newUserData, branchId: e.target.value })}
                     className="w-full px-3 py-2 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-                    required={newUserData.role === 'cashier'}
+                    required={newUserData.role === 'cashier' || newUserData.role === 'manager'}
                   >
                     <option value="">-- Select Branch --</option>
                     {branches.map(branch => (
