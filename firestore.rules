@@ -35,6 +35,10 @@ service cloud.firestore {
       return hasProfile() && myRole() == 'admin';
     }
 
+    function isManager() {
+      return hasProfile() && myRole() == 'manager';
+    }
+
     // Global user profile mapping (uid -> adminId/branch/role)
     match /userProfiles/{uid} {
       allow read: if isSignedIn() && (
@@ -48,7 +52,24 @@ service cloud.firestore {
       // - Only admins can create/update role/adminId/branchId within their org.
 
       // Admin can create profiles inside their org.
-      allow create: if isAdmin() && request.resource.data.adminId == myAdminId();
+      allow create: if
+        // Admin can create profiles inside their org.
+        (isAdmin() && request.resource.data.adminId == myAdminId())
+        ||
+        // Manager can provision CASHIERS for their own branch (needed for branch staff management).
+        // This is tightly restricted to prevent privilege escalation:
+        // - must stay in same org
+        // - role must be 'cashier'
+        // - branchId must match manager's branch
+        // - createdBy must be the manager's uid
+        // - uid field must match doc id
+        (isManager() &&
+          request.resource.data.adminId == myAdminId() &&
+          request.resource.data.role == 'cashier' &&
+          request.resource.data.branchId == myBranchId() &&
+          request.resource.data.createdBy == request.auth.uid &&
+          request.resource.data.uid == uid
+        );
 
       // Admin can delete profiles inside their org.
       allow delete: if isAdmin() && resource.data.adminId == myAdminId();

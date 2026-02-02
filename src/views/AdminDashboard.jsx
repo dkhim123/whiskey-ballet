@@ -14,16 +14,36 @@ import {
   subscribeToTransactions, 
   subscribeToExpenses, 
   subscribeToUsers, 
-  subscribeToSettings 
+  subscribeToSettings,
+  subscribeToInventoryByBranch,
+  subscribeToTransactionsByBranch,
+  subscribeToExpensesByBranch,
+  subscribeToUsersByBranch
 } from "../services/realtimeListeners"
 import { toast } from "sonner"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
 import { getTodayAtMidnight, getTodayISO, formatTimeAgo } from "../utils/dateUtils"
 import { checkIfMigrationNeeded, migrateDataToBranchIsolation } from "../utils/dataMigration"
+import { getAllBranches } from "../services/branchService"
 
 export default function AdminDashboard({ currentUser, onPageChange }) {
-  const [selectedBranch, setSelectedBranch] = useState('')
+  const isAdminView = currentUser?.role === 'admin'
+  const isManagerView = currentUser?.role === 'manager'
+
+  // Resolved branch name for manager view (shows "Nakuru Branch" instead of branch ID)
+  const [branchDisplayName, setBranchDisplayName] = useState('')
+
+  const [selectedBranch, setSelectedBranch] = useState(() => {
+    // Admin: persisted branch filter; Manager: locked to their branch
+      if (typeof window === 'undefined') return isManagerView ? (currentUser?.branchId || '') : ''
+    try {
+      return isManagerView ? (currentUser?.branchId || '') : (localStorage.getItem('adminSelectedBranch') || '')
+    } catch {
+      return isManagerView ? (currentUser?.branchId || '') : ''
+    }
+  })
   const [selectedCashier, setSelectedCashier] = useState('')
+  const [dateRange, setDateRange] = useState(() => (isManagerView ? 'week' : 'today')) // 'today' | 'week' | 'month'
   const [inventoryData, setInventoryData] = useState([])
   const [transactionsData, setTransactionsData] = useState([])
   const [expensesData, setExpensesData] = useState([])
@@ -43,7 +63,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
   // Check for data migration on mount
   useEffect(() => {
     const checkMigration = async () => {
-      if (currentUser?.role === 'admin') {
+      if (isAdminView) {
         const needsMigration = await checkIfMigrationNeeded(currentUser)
         if (needsMigration) {
           const confirmed = window.confirm(
@@ -72,26 +92,68 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
       }
     }
     checkMigration()
-  }, [currentUser])
+  }, [currentUser, isAdminView])
+
+  // Manager branch is locked (keep in sync with profile updates)
+  useEffect(() => {
+    if (!isManagerView) return
+    const b = currentUser?.branchId || ''
+    setSelectedBranch(b)
+    setSelectedCashier('')
+  }, [isManagerView, currentUser?.branchId])
+
+  // Resolve manager's branch ID to human-readable name for "Locked" display
+  useEffect(() => {
+    if (!isManagerView) {
+      setBranchDisplayName('')
+      return
+    }
+    const branchId = selectedBranch || currentUser?.branchId || ''
+    if (!branchId) {
+      setBranchDisplayName('')
+      return
+    }
+    let cancelled = false
+    getAllBranches()
+      .then((branches) => {
+        if (cancelled) return
+        const match = (branches || []).find((b) => b.id === branchId)
+        setBranchDisplayName(match?.name || branchId)
+      })
+      .catch(() => {
+        if (!cancelled) setBranchDisplayName(branchId)
+      })
+    return () => { cancelled = true }
+  }, [isManagerView, selectedBranch, currentUser?.branchId])
 
   // Subscribe to all data sources
   useEffect(() => {
     if (!currentUser) return
 
     const adminId = getAdminIdForStorage(currentUser)
-    
-    const unsubscribers = [
-      subscribeToInventory(adminId, setInventoryData),
-      subscribeToTransactions(adminId, setTransactionsData),
-      subscribeToExpenses(adminId, setExpensesData),
-      subscribeToUsers(adminId, setUsersData),
-      subscribeToSettings(adminId, (data) => setSettingsData(data[0] || null))
-    ]
+
+    const branchId = isManagerView ? (currentUser?.branchId || '') : null
+
+    const unsubscribers = isManagerView
+      ? [
+          subscribeToInventoryByBranch(adminId, branchId, setInventoryData),
+          subscribeToTransactionsByBranch(adminId, branchId, setTransactionsData),
+          subscribeToExpensesByBranch(adminId, branchId, setExpensesData),
+          subscribeToUsersByBranch(adminId, branchId, setUsersData),
+          subscribeToSettings(adminId, (data) => setSettingsData(data[0] || null)),
+        ]
+      : [
+          subscribeToInventory(adminId, setInventoryData),
+          subscribeToTransactions(adminId, setTransactionsData),
+          subscribeToExpenses(adminId, setExpensesData),
+          subscribeToUsers(adminId, setUsersData),
+          subscribeToSettings(adminId, (data) => setSettingsData(data[0] || null)),
+        ]
 
     return () => {
       unsubscribers.forEach(unsub => unsub && unsub())
     }
-  }, [currentUser])
+  }, [currentUser, isManagerView])
 
   // Filter cashiers for selected branch
   const cashiers = useMemo(() => {
@@ -105,49 +167,57 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
 
   // Calculate dashboard metrics
   const dashboardData = useMemo(() => {
-    const today = getTodayAtMidnight()
+    const now = new Date()
+    const startDate = new Date()
+    if (dateRange === 'today') {
+      startDate.setHours(0, 0, 0, 0)
+    } else if (dateRange === 'week') {
+      startDate.setDate(now.getDate() - 7)
+    } else if (dateRange === 'month') {
+      startDate.setMonth(now.getMonth() - 1)
+    } else {
+      startDate.setHours(0, 0, 0, 0)
+    }
 
     // Filter transactions by date and selected filters
-    let todayTransactions = transactionsData.filter(t => {
+    let rangeTransactions = (transactionsData || []).filter(t => {
       const transDate = new Date(t.timestamp)
-      transDate.setHours(0, 0, 0, 0)
-      return transDate.getTime() === today.getTime()
+      return !isNaN(transDate.getTime()) && transDate >= startDate
     })
 
     // Apply branch filter
     if (selectedBranch) {
-      todayTransactions = todayTransactions.filter(t => t.branchId === selectedBranch)
+      rangeTransactions = rangeTransactions.filter(t => t.branchId === selectedBranch)
     }
 
     // Apply cashier filter
     if (selectedCashier) {
-      todayTransactions = todayTransactions.filter(t => t.userId === selectedCashier)
+      rangeTransactions = rangeTransactions.filter(t => t.userId === selectedCashier)
     }
 
     // Calculate financial metrics
-    const cashCollected = todayTransactions
+    const cashCollected = rangeTransactions
       .filter(t => t.paymentMethod === 'cash' && (t.paymentStatus === 'completed' || !t.paymentStatus))
       .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
       
-    const mpesaCollected = todayTransactions
+    const mpesaCollected = rangeTransactions
       .filter(t => t.paymentMethod === 'mpesa' && (t.paymentStatus === 'completed' || !t.paymentStatus))
       .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
       
     const expectedTotal = cashCollected + mpesaCollected
 
-    // Calculate today's expenses
-    let todayExpenses = expensesData.filter(e => {
+    // Calculate expenses in range
+    let rangeExpenses = expensesData.filter(e => {
       const expenseDate = new Date(e.date)
-      expenseDate.setHours(0, 0, 0, 0)
-      return expenseDate.getTime() === today.getTime()
+      return !isNaN(expenseDate.getTime()) && expenseDate >= startDate
     })
 
     // Apply branch filter to expenses
     if (selectedBranch) {
-      todayExpenses = todayExpenses.filter(e => e.branchId === selectedBranch)
+      rangeExpenses = rangeExpenses.filter(e => e.branchId === selectedBranch)
     }
 
-    const totalExpenses = todayExpenses.reduce((sum, e) => sum + (e.amount || 0), 0)
+    const totalExpenses = rangeExpenses.reduce((sum, e) => sum + (e.amount || 0), 0)
     const profit = expectedTotal - totalExpenses
 
     // Get spending limit from settings
@@ -168,7 +238,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     ).length
 
     // Format recent transactions
-    const recentTransactions = todayTransactions
+    const recentTransactions = rangeTransactions
       .slice(-5)
       .reverse()
       .map(t => ({
@@ -185,7 +255,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
       cashCollected,
       mpesaCollected,
       expectedTotal,
-      salesCount: todayTransactions.length,
+      salesCount: rangeTransactions.length,
       lowStockAlerts: lowStockCount,
       expiredItems: expiredCount,
       expiringSoonItems: expiringSoonCount,
@@ -196,7 +266,12 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
       spendingLimitPercentage,
       isOverSpendingLimit
     }
-  }, [transactionsData, expensesData, inventoryData, settingsData, selectedBranch, selectedCashier])
+  }, [transactionsData, expensesData, inventoryData, settingsData, selectedBranch, selectedCashier, dateRange])
+
+  const dateRangeLabel =
+    dateRange === 'today' ? 'Today'
+    : dateRange === 'week' ? 'Last 7 days'
+    : 'Last 30 days'
 
   const dismissNotification = (type) => {
     try {
@@ -216,10 +291,17 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
 
   return (
     <div className="flex flex-col h-full">
-      <TopBar title="Admin Dashboard" subtitle="Overview of daily operations and wines & spirits earnings" />
+      <TopBar
+        title={isManagerView ? "Branch Dashboard" : "Admin Dashboard"}
+        subtitle={
+          isManagerView
+            ? `Branch overview • ${dateRangeLabel}`
+            : "Overview of daily operations and wines & spirits earnings"
+        }
+      />
 
       {/* Branch and Cashier Filters - Admin Only */}
-      {currentUser?.role === 'admin' && (
+      {isAdminView && (
         <div className="px-3 sm:px-6 py-4 bg-muted/30 border-b border-border">
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
             <div className="flex-1">
@@ -228,6 +310,9 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
                 selectedBranch={selectedBranch}
                 onBranchChange={(branchId) => {
                   setSelectedBranch(branchId)
+                  try {
+                    localStorage.setItem('adminSelectedBranch', branchId || '')
+                  } catch {}
                   setSelectedCashier('') // Reset cashier when branch changes
                 }}
               />
@@ -273,6 +358,61 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
         </div>
       )}
 
+      {/* Manager: branch locked + cashier filter + date range */}
+      {isManagerView && (
+        <div className="px-3 sm:px-6 py-4 bg-muted/30 border-b border-border">
+          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-end">
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-foreground">Branch</div>
+              <div className="mt-1 inline-flex items-center gap-2 px-3 py-2 bg-background border border-border rounded-lg">
+                <span className="text-xs text-muted-foreground">Locked:</span>
+                <span className="text-sm font-bold text-foreground">{branchDisplayName || selectedBranch || currentUser?.branchId || '—'}</span>
+              </div>
+            </div>
+
+            {cashiers.length > 0 && (
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Filter by Cashier
+                </label>
+                <select
+                  value={selectedCashier}
+                  onChange={(e) => setSelectedCashier(e.target.value)}
+                  className="w-full px-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-foreground"
+                >
+                  <option value="">All Cashiers ({cashiers.length})</option>
+                  {cashiers.map(cashier => (
+                    <option key={cashier.id} value={cashier.id}>
+                      {cashier.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {[
+                { id: 'today', label: 'Today' },
+                { id: 'week', label: 'Last 7 days' },
+                { id: 'month', label: 'Last 30 days' },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => setDateRange(opt.id)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-full border-2 transition-all ${
+                    dateRange === opt.id
+                      ? 'bg-primary/10 text-primary border-primary/30 shadow-md'
+                      : 'bg-muted/50 text-muted-foreground border-border hover:bg-muted'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="p-3 sm:p-6 flex-1">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-6 mb-6 sm:mb-8">
           <DashboardCard
@@ -280,7 +420,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             value={`KES ${(dashboardData.expectedTotal || 0).toLocaleString()}`}
             icon="💰"
             variant="success"
-            subtitle="All sales today"
+            subtitle={`${dateRangeLabel} sales`}
             onClick={() => {
               setAccountabilityType('sales')
               setShowAccountabilityModal(true)
@@ -291,7 +431,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             value={`KES ${(dashboardData.cashCollected || 0).toLocaleString()}`}
             icon="💵"
             variant="primary"
-            subtitle="Today's cash sales"
+            subtitle={`${dateRangeLabel} cash sales`}
             onClick={() => {
               setAccountabilityType('cash')
               setShowAccountabilityModal(true)
@@ -302,7 +442,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             value={`KES ${(dashboardData.mpesaCollected || 0).toLocaleString()}`}
             icon="📱"
             variant="secondary"
-            subtitle="Today's M-Pesa sales"
+            subtitle={`${dateRangeLabel} M-Pesa sales`}
             onClick={() => {
               setAccountabilityType('mpesa')
               setShowAccountabilityModal(true)
@@ -313,7 +453,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             value={`KES ${(dashboardData.totalExpenses || 0).toLocaleString()}`}
             icon="💸"
             variant={dashboardData.isOverSpendingLimit ? "destructive" : "warning"}
-            subtitle={dashboardData.isOverSpendingLimit ? `Over ${dashboardData.spendingLimitPercentage}% limit!` : "Today"}
+            subtitle={dashboardData.isOverSpendingLimit ? `Over ${dashboardData.spendingLimitPercentage}% limit!` : dateRangeLabel}
             onClick={() => {
               setAccountabilityType('expenses')
               setShowAccountabilityModal(true)
@@ -446,7 +586,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
             <div className="flex items-start gap-3">
               <div className="text-2xl">📊</div>
               <div className="flex-1">
-                <p className="text-sm font-bold text-primary mb-1">Sales Today</p>
+                <p className="text-sm font-bold text-primary mb-1">{dateRangeLabel} Sales</p>
                 <p className="text-2xl font-bold text-primary mt-1">
                   {dashboardData.salesCount}
                 </p>
@@ -488,14 +628,25 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
               <div className="text-sm font-bold text-blue-700 dark:text-blue-400">Transactions</div>
               <div className="text-xs text-muted-foreground mt-1">View history</div>
             </button>
-            <button
-              onClick={() => onPageChange && onPageChange('branch-management')}
-              className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-            >
-              <div className="text-3xl mb-2">🏢</div>
-              <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Branches</div>
-              <div className="text-xs text-muted-foreground mt-1">Manage locations</div>
-            </button>
+            {isAdminView ? (
+              <button
+                onClick={() => onPageChange && onPageChange('branch-management')}
+                className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+              >
+                <div className="text-3xl mb-2">🏢</div>
+                <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Branches</div>
+                <div className="text-xs text-muted-foreground mt-1">Manage locations</div>
+              </button>
+            ) : (
+              <button
+                onClick={() => onPageChange && onPageChange('inventory')}
+                className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+              >
+                <div className="text-3xl mb-2">📦</div>
+                <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Inventory</div>
+                <div className="text-xs text-muted-foreground mt-1">View stock</div>
+              </button>
+            )}
           </div>
         </div>
 
@@ -514,7 +665,7 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
         <AccountabilityModal
           type={accountabilityType}
           onClose={() => setShowAccountabilityModal(false)}
-          dateRange="today"
+          dateRange={dateRange}
           currentUser={currentUser}
           selectedBranch={selectedBranch}
         />

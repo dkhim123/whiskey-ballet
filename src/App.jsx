@@ -376,7 +376,16 @@ export default function App() {
             updateSessionPage(page)
           }} />}
           {currentPage === "cashier-dashboard" && <CashierDashboard key={currentUser?.id} currentUser={currentUser} />}
-          {currentPage === "manager-dashboard" && <ManagerDashboard key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "manager-dashboard" && (
+            <AdminDashboard
+              key={currentUser?.id}
+              currentUser={currentUser}
+              onPageChange={(page) => {
+                setCurrentPage(page)
+                updateSessionPage(page)
+              }}
+            />
+          )}
           {currentPage === "reports" && <ReportsPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "transactions-history" && <TransactionsHistoryPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "expenses" && <ExpensesPage key={currentUser?.id} currentUser={currentUser} />}

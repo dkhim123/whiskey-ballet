@@ -7,6 +7,10 @@ import PWAInstallPrompt from "../components/PWAInstallPrompt"
 import { getAllUsers, updateUserPassword, deactivateUser, registerUser, updateUserBranch } from "../utils/auth"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
 import { getAllBranches } from "../services/branchService"
+import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToUsers } from "../services/realtimeListeners"
+import { db, isFirebaseConfigured } from "../config/firebase"
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore"
 
 // Default state for new user form
 const DEFAULT_USER_DATA = {
@@ -51,12 +55,116 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
   // New user form state
   const [newUserData, setNewUserData] = useState(DEFAULT_USER_DATA)
 
+  // Load users and branches (defined before effects to avoid hook-order issues)
+  const loadUsers = async () => {
+    try {
+      // Pass currentUser.id to filter users created by this admin
+      const allUsers = await getAllUsers(currentUser?.id)
+      console.log('👥 Loaded users:', allUsers.map(u => ({ name: u.name, role: u.role, branchId: u.branchId })))
+      setUsers(allUsers)
+    } catch (error) {
+      console.error("Error loading users:", error)
+      setError("Failed to load users")
+    }
+  }
+
+  const loadBranches = async () => {
+    try {
+      const allBranches = await getAllBranches()
+      console.log('🏢 Loaded branches:', allBranches.map(b => ({ id: b.id, name: b.name })))
+      setBranches(allBranches.filter(b => b.isActive))
+    } catch (error) {
+      console.error("Error loading branches:", error)
+    }
+  }
+
+  // Load users and branches on mount / when currentUser changes.
+  // IMPORTANT: keep hook order stable (never return before hooks).
+  useEffect(() => {
+    if (currentUser?.role !== 'admin') return
+    loadBranches()
+
+    const adminId = getAdminIdForStorage(currentUser)
+    const canUseRealtime =
+      typeof window !== "undefined" &&
+      !!adminId &&
+      (typeof navigator === "undefined" ? true : navigator.onLine)
+
+    if (!canUseRealtime) {
+      loadUsers()
+      return
+    }
+
+    const unsub = subscribeToUsers(adminId, (data) => {
+      // Realtime org users from Firestore
+      setUsers(data || [])
+    })
+    return () => {
+      try {
+        unsub && unsub()
+      } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role])
+
+  // Auto-fix manager/cashier login provisioning (plain English):
+  // If a user exists in org users but is missing userProfiles/{uid},
+  // they will see "This account is not provisioned..." on login.
+  // This silently creates the missing profile so they can login.
+  useEffect(() => {
+    const provisionMissingProfiles = async () => {
+      try {
+        if (currentUser?.role !== "admin") return
+        if (!isFirebaseConfigured() || !db) return
+
+        const adminId = getAdminIdForStorage(currentUser)
+        if (!adminId) return
+
+        const list = Array.isArray(users) ? users : []
+        // Only check a small batch quickly (prevents hammering Firestore)
+        const maxChecks = 25
+        const candidates = list.slice(0, maxChecks)
+
+        await Promise.all(
+          candidates.map(async (u) => {
+            const uid = u?.uid || u?.id
+            if (!uid || typeof uid !== "string") return
+            if (uid === currentUser?.id) return
+
+            const snap = await getDoc(doc(db, "userProfiles", uid))
+            if (snap.exists()) return
+
+            const profile = {
+              uid,
+              adminId,
+              email: u?.email || null,
+              role: u?.role || null,
+              name: u?.name || null,
+              createdBy: u?.createdBy || null,
+              branchId: u?.branchId ?? null,
+              isActive: u?.isActive ?? true,
+              createdAt: u?.createdAt || new Date().toISOString(),
+              updatedAt: serverTimestamp(),
+            }
+            await setDoc(doc(db, "userProfiles", uid), profile, { merge: true })
+          })
+        )
+      } catch (e) {
+        // Non-fatal: admin page should still work
+        console.warn("Auto-provision user profiles failed:", e)
+      }
+    }
+
+    provisionMissingProfiles()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role, users])
+
   // Check if user is authorized to access this page
   if (currentUser?.role !== 'admin') {
     return (
       <div className="flex flex-col h-screen bg-background">
         <TopBar title="Admin Settings" />
-        
+
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="max-w-md w-full bg-card rounded-xl shadow-xl border-2 border-border p-8 text-center">
             <div className="w-20 h-20 mx-auto mb-6 bg-destructive/10 rounded-full flex items-center justify-center">
@@ -84,34 +192,6 @@ export default function AdminSettingsPage({ currentUser, inventory = [] }) {
         </div>
       </div>
     )
-  }
-
-  // Load users and branches on component mount
-  useEffect(() => {
-    loadUsers()
-    loadBranches()
-  }, [currentUser])
-
-  const loadUsers = async () => {
-    try {
-      // Pass currentUser.id to filter users created by this admin
-      const allUsers = await getAllUsers(currentUser?.id)
-      console.log('👥 Loaded users:', allUsers.map(u => ({ name: u.name, role: u.role, branchId: u.branchId })))
-      setUsers(allUsers)
-    } catch (error) {
-      console.error("Error loading users:", error)
-      setError("Failed to load users")
-    }
-  }
-
-  const loadBranches = async () => {
-    try {
-      const allBranches = await getAllBranches()
-      console.log('🏢 Loaded branches:', allBranches.map(b => ({ id: b.id, name: b.name })))
-      setBranches(allBranches.filter(b => b.isActive))
-    } catch (error) {
-      console.error("Error loading branches:", error)
-    }
   }
 
   const handlePasswordChange = async () => {

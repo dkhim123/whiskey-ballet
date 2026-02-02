@@ -233,6 +233,7 @@ export const getAccessiblePages = (user) => {
   if (user.role === 'admin') {
     pages.push(
       'admin-dashboard',
+      'inventory',
       'reports',
       'expenses',
       'transactions-history',

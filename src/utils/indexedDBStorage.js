@@ -492,8 +492,42 @@ const putBatch = async (storeName, adminId, items) => {
             console.log(`🧹 IndexedDB: Cleared ${deleteCount} old items from ${storeName}`)
             
             // STEP 2: Now that clearing is done, add all new items
+            const keyPath = store.keyPath
+            const hasKey = (obj) => {
+              // keyPath can be string, array, or null
+              if (!keyPath) return true
+              if (typeof keyPath === 'string') {
+                const v = obj?.[keyPath]
+                return v !== undefined && v !== null
+              }
+              if (Array.isArray(keyPath)) {
+                return keyPath.every((k) => {
+                  const v = obj?.[k]
+                  return v !== undefined && v !== null
+                })
+              }
+              return true
+            }
+
             for (const item of items) {
+              // Defensive: skip invalid entries instead of crashing the whole app.
+              // This typically happens when an array accidentally contains `undefined` or an object without `id`.
+              if (!item || typeof item !== 'object') {
+                errorCount++
+                console.warn(`⚠️ IndexedDB: Skipping invalid item in ${storeName} (not an object)`)
+                continue
+              }
+
               const dataWithAdmin = { ...item, adminId }
+              if (!hasKey(dataWithAdmin)) {
+                errorCount++
+                console.warn(
+                  `⚠️ IndexedDB: Skipping item missing required keyPath (${JSON.stringify(keyPath)}) in ${storeName}`,
+                  dataWithAdmin
+                )
+                continue
+              }
+
               const putRequest = store.put(dataWithAdmin)
               
               putRequest.onsuccess = () => successCount++

@@ -16,16 +16,26 @@ import { getAdminIdForStorage } from "../utils/auth"
 import { subscribeToInventory } from "../services/realtimeListeners"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
 import { useDebounce } from "../hooks/useDebounce"
-import { readSharedData } from "../utils/storage"
+import { readSharedData, writeSharedData } from "../utils/storage"
 
 const CATEGORIES = ["All", "Red Wine", "White Wine", "Rosé Wine", "Sparkling Wine", "Whisky", "Vodka", "Rum", "Gin", "Tequila", "Brandy", "Liqueur", "Beer", "Spirits", "Mixers", "Other"]
 const EXPIRY_FILTERS = ["All", "Expired", "Expiring Soon (7 days)", "Valid"]
 const STOCK_FILTERS = ["All Stock", "Low Stock", "Out of Stock", "In Stock"]
 
 export default function InventoryPage({ onInventoryChange, currentUser }) {
+  const isAdminReadOnly = currentUser?.role === 'admin'
   const [inventory, setInventory] = useState([])
   const [allInventory, setAllInventory] = useState([]) // Store all inventory for admin
-  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
+  const [selectedBranch, setSelectedBranch] = useState(() => {
+    if (typeof window === 'undefined') return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    try {
+      return currentUser?.role === 'admin'
+        ? (localStorage.getItem('adminSelectedBranch') || '')
+        : (currentUser?.branchId || '')
+    } catch {
+      return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    }
+  })
   const isSavingRef = useRef(false) // Track if we're currently saving
   const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -357,6 +367,10 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
 
   const handleSaveAdjustment = async (adjustment) => {
     try {
+      if (isAdminReadOnly) {
+        alert('Admin is monitor-only. Stock adjustments are disabled.')
+        return
+      }
       const userId = currentUser?.id
       if (!userId) {
         alert('User not authenticated')
@@ -418,6 +432,10 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   }
 
   const handleSaveProduct = async (updatedProduct) => {
+    if (isAdminReadOnly) {
+      alert('Admin is monitor-only. Editing products is disabled.')
+      return
+    }
     // Preserve branchId from original product when updating
     const originalProduct = inventory.find(item => item.id === updatedProduct.id)
     const productToSave = {
@@ -450,6 +468,10 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   }
 
   const handleDeleteProduct = async (productId) => {
+    if (isAdminReadOnly) {
+      alert('Admin is monitor-only. Deleting products is disabled.')
+      return
+    }
     const product = inventory.find(item => item.id === productId)
     if (!product) {
       console.error(`❌ Product ${productId} not found`)
@@ -496,10 +518,8 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   }
 
   const handleAddProduct = async (newProduct) => {
-    // Admin MUST pick a branch before adding a product.
-    // Without a branchId, the product becomes "unassigned" and will be hidden from cashiers/managers.
-    if (currentUser?.role === 'admin' && !selectedBranch) {
-      alert('Please select a branch before adding a product. This ensures the product is visible to the correct branch.')
+    if (isAdminReadOnly) {
+      alert('Admin is monitor-only. Adding products is disabled.')
       return
     }
 
@@ -543,6 +563,10 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
 
   const handleSaveStockCount = async (updatedInventory) => {
     try {
+      if (isAdminReadOnly) {
+        alert('Admin is monitor-only. Stock count is disabled.')
+        return
+      }
       const userId = currentUser?.id
       if (!userId) {
         alert('User not authenticated')
@@ -591,8 +615,11 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     <div className="flex flex-col h-full">
       <TopBar
         title="Inventory Management"
-        subtitle="Track stock levels and manage products"
+        subtitle={isAdminReadOnly ? "Track stock levels across branches (read-only)" : "Track stock levels and manage products"}
         actions={[
+          ...(isAdminReadOnly
+            ? []
+            : [
           <button
             key="stock-count"
             onClick={() => setShowStockCountModal(true)}
@@ -607,6 +634,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
             </div>
             <div className="absolute inset-0 rounded-xl bg-linear-to-r from-blue-500/0 via-blue-500/5 to-blue-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
+            ]),
           <button
             key="export"
             onClick={exportToCSV}
@@ -621,6 +649,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
             </div>
             <div className="absolute inset-0 rounded-xl bg-linear-to-r from-green-500/0 via-green-500/5 to-green-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
+          ...(isAdminReadOnly
+            ? []
+            : [
           <button
             key="csv-upload"
             onClick={() => setShowCSVUpload(true)}
@@ -649,6 +680,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
             </div>
             <div className="absolute inset-0 rounded-xl bg-linear-to-r from-white/0 via-white/10 to-white/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
           </button>,
+            ]),
         ]}
       />
 
@@ -660,6 +692,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
             selectedBranch={selectedBranch}
             onBranchChange={(branchId) => {
               setSelectedBranch(branchId)
+              try {
+                localStorage.setItem('adminSelectedBranch', branchId || '')
+              } catch {}
               setCurrentPage(1) // Reset pagination
             }}
           />
@@ -824,10 +859,11 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
 
         <InventoryTable 
           items={paginatedInventory} 
-          onEdit={handleEditClick} 
+          onEdit={isAdminReadOnly ? null : handleEditClick}
           onBarcode={handleBarcodeClick}
-          onAdjust={handleAdjustmentClick}
-          branchId={currentUser?.branchId}
+          onAdjust={isAdminReadOnly ? null : handleAdjustmentClick}
+          // InventoryPage already filters by role/branch; avoid double-filtering for admins.
+          branchId={currentUser?.role === 'cashier' ? currentUser?.branchId : null}
         />
 
         {/* Pagination */}
@@ -846,7 +882,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
         <BarcodeModal product={selectedProduct} onClose={() => setShowBarcodeModal(false)} />
       )}
 
-      {showEditModal && selectedProduct && (
+      {!isAdminReadOnly && showEditModal && selectedProduct && (
         <EditProductModal
           product={selectedProduct}
           onSave={handleSaveProduct}
@@ -856,7 +892,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
         />
       )}
 
-      {showAdjustmentModal && selectedProduct && (
+      {!isAdminReadOnly && showAdjustmentModal && selectedProduct && (
         <StockAdjustmentModal
           product={selectedProduct}
           currentUser={currentUser}
@@ -865,9 +901,11 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
         />
       )}
 
-      {showAddModal && <AddProductModal onAdd={handleAddProduct} onClose={() => setShowAddModal(false)} />}
+      {!isAdminReadOnly && showAddModal && (
+        <AddProductModal onAdd={handleAddProduct} onClose={() => setShowAddModal(false)} />
+      )}
 
-      {showStockCountModal && (
+      {!isAdminReadOnly && showStockCountModal && (
         <StockCountModal
           inventory={inventory}
           onSave={handleSaveStockCount}
@@ -876,7 +914,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       )}
 
       {/* CSV Upload Modal */}
-      {showCSVUpload && (
+      {!isAdminReadOnly && showCSVUpload && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-background border-2 border-border rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-auto">
             <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center justify-between">

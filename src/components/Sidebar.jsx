@@ -16,6 +16,7 @@ import HelpIcon from "./icons/HelpIcon"
 import ThemeToggle from "./ThemeToggle"
 import { getStorageMode } from "../utils/storage"
 import { getFirstName } from "../utils/nameHelpers"
+import { getAllBranches } from "../services/branchService"
 
 function BrandBadge({ size = "lg" }) {
   const [imgOk, setImgOk] = useState(true)
@@ -51,11 +52,42 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
   const [storageMode, setStorageMode] = useState("web")
   const avatarUrl = currentUser?.photoURL || currentUser?.avatarUrl || null
   const [avatarOk, setAvatarOk] = useState(true)
+  const [branchLabel, setBranchLabel] = useState("")
 
   useEffect(() => {
     // If user changes their avatar, re-allow image loading.
     setAvatarOk(true)
   }, [avatarUrl])
+
+  useEffect(() => {
+    const loadBranchLabel = async () => {
+      try {
+        if (!currentUser) {
+          setBranchLabel("")
+          return
+        }
+        if (currentUser.role === "admin") {
+          setBranchLabel("")
+          return
+        }
+        const branchId = currentUser.branchId
+        if (!branchId) {
+          setBranchLabel("")
+          return
+        }
+
+        // Try to resolve branchId -> human name
+        const branches = await getAllBranches()
+        const match = (branches || []).find((b) => b.id === branchId)
+        setBranchLabel(match?.name || branchId)
+      } catch {
+        // Fallback: show raw branchId if we can't load branches
+        setBranchLabel(currentUser?.branchId || "")
+      }
+    }
+
+    loadBranchLabel()
+  }, [currentUser?.id, currentUser?.role, currentUser?.branchId])
 
   useEffect(() => {
     // Add global style for hiding scrollbar in sidebar navigation
@@ -86,6 +118,7 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
     ? [
         // Admin: Monitoring only - no operational features
         { id: "admin-dashboard", label: "Dashboard", icon: DashboardIcon },
+        { id: "inventory", label: "Inventory", icon: BoxIcon },
         { id: "reports", label: "Reports", icon: ChartBarIcon },
         { id: "expenses", label: "Expense Tracker", icon: CashIcon },
         { id: "transactions-history", label: "Transaction History", icon: DocumentIcon },
@@ -295,7 +328,11 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
                   {currentUser?.name ? getFirstName(currentUser.name) : (userRole === 'admin' ? 'Admin' : userRole === 'manager' ? 'Manager' : 'Cashier')}
                 </div>
                 <div className="text-xs text-[#F5F5DC]/70 truncate">
-                  {userRole === 'admin' ? 'Administrator' : userRole === 'manager' ? 'Stock Manager' : 'Cashier'}
+                  {userRole === 'admin'
+                    ? 'Administrator'
+                    : userRole === 'manager'
+                    ? `Manager • ${branchLabel || 'No branch'}`
+                    : `Cashier • ${branchLabel || 'No branch'}`}
                 </div>
               </div>
               <ThemeToggle />

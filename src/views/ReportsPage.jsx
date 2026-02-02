@@ -25,7 +25,16 @@ export default function ReportsPage({ currentUser }) {
   const [dateRange, setDateRange] = useState('today')
   const [paymentMethod, setPaymentMethod] = useState('all')
   const [productSortBy, setProductSortBy] = useState('revenue') // 'revenue' or 'quantity'
-  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
+  const [selectedBranch, setSelectedBranch] = useState(() => {
+    if (typeof window === 'undefined') return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    try {
+      return currentUser?.role === 'admin'
+        ? (localStorage.getItem('adminSelectedBranch') || '')
+        : (currentUser?.branchId || '')
+    } catch {
+      return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    }
+  })
 
   useEffect(() => {
     if (!currentUser) return;
@@ -224,7 +233,12 @@ export default function ReportsPage({ currentUser }) {
             {currentUser?.role === 'admin' && (
               <BranchSelector
                 selectedBranch={selectedBranch}
-                onBranchChange={setSelectedBranch}
+                onBranchChange={(branchId) => {
+                  setSelectedBranch(branchId)
+                  try {
+                    localStorage.setItem('adminSelectedBranch', branchId || '')
+                  } catch {}
+                }}
                 currentUser={currentUser}
               />
             )}

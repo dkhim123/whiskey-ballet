@@ -255,18 +255,19 @@ export async function readSharedDataOnline(adminId, includeDeleted = false) {
       // Read each store from Firebase
       for (const store of stores) {
         const collectionRef = collection(db, 'organizations', adminId, store.name)
-        let q = query(collectionRef)
-        
-        // Filter deleted items if needed
-        if (!includeDeleted) {
-          q = query(collectionRef, where('isDeleted', '!=', true))
-        }
-        
-        const snapshot = await getDocs(q)
-        data[store.key] = snapshot.docs.map(doc => ({
+        const snapshot = await getDocs(collectionRef)
+        const rows = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }))
+
+        // IMPORTANT (plain English):
+        // We DO NOT use `where('isDeleted','!=',true)` here because Firestore excludes
+        // documents that don't have the field at all (which makes freshly imported items "disappear").
+        // Instead, we filter in code for backward compatibility.
+        data[store.key] = includeDeleted
+          ? rows
+          : rows.filter((item) => item?.isDeleted !== true && !item?.deletedAt)
         
         console.log(`📦 Read ${data[store.key].length} items from Firebase ${store.name}`)
       }

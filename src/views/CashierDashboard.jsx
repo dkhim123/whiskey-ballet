@@ -7,6 +7,7 @@ import RecentTransactions from "../components/RecentTransactions"
 import AccountabilityModal from "../components/AccountabilityModal"
 import { readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToTransactions } from "../services/realtimeListeners"
 import { getTodayAtMidnight, formatTimeAgo } from "../utils/dateUtils"
 
 export default function CashierDashboard({ currentUser }) {
@@ -76,12 +77,71 @@ export default function CashierDashboard({ currentUser }) {
       }
     }
     
-    loadDashboardData()
-    
-    // Refresh every 30 seconds
-    const interval = setInterval(loadDashboardData, 30000)
-    return () => clearInterval(interval)
-  }, [currentUser])
+    const adminId = currentUser ? getAdminIdForStorage(currentUser) : null
+    const canUseRealtime =
+      typeof window !== "undefined" &&
+      !!adminId &&
+      (typeof navigator === "undefined" ? true : navigator.onLine)
+
+    if (!canUseRealtime) {
+      loadDashboardData()
+      const interval = setInterval(loadDashboardData, 30000)
+      return () => clearInterval(interval)
+    }
+
+    const branchId = currentUser?.branchId
+    const unsub = subscribeToTransactions(adminId, (allTransactions) => {
+      const userId = currentUser?.id
+      if (!userId) return
+      const transactions = (allTransactions || []).filter((t) => {
+        const matchesUser = t.userId === userId
+        const matchesBranch = branchId ? t.branchId === branchId : true
+        return matchesUser && matchesBranch
+      })
+
+      const today = getTodayAtMidnight()
+      const todayTransactions = transactions.filter((t) => {
+        const transDate = new Date(t.timestamp)
+        transDate.setHours(0, 0, 0, 0)
+        return transDate.getTime() === today.getTime()
+      })
+
+      const dailyTotal = todayTransactions.reduce((sum, t) => sum + (t.total ?? 0), 0)
+      const transactionsCount = todayTransactions.length
+      const averageSale = transactionsCount > 0 ? Math.round(dailyTotal / transactionsCount) : 0
+
+      const recentTransactions = transactions
+        .slice(-5)
+        .reverse()
+        .map((t) => ({
+          id: t.id,
+          type:
+            t.paymentMethod === "mpesa"
+              ? "M-Pesa"
+              : t.paymentMethod === "credit"
+              ? "Credit"
+              : "Cash",
+          amount: t.total ?? 0,
+          time: formatTimeAgo(t.timestamp),
+          items: t.itemCount ?? 0,
+        }))
+
+      setDashboardData({
+        dailyTotal,
+        transactionsCount,
+        averageSale,
+        recentTransactions,
+        fullTransactions: transactions,
+      })
+    })
+
+    return () => {
+      try {
+        unsub && unsub()
+      } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.branchId])
 
   return (
     <div className="flex flex-col h-full">

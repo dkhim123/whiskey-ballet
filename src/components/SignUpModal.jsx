@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { X, UserPlus, Eye, EyeOff, CheckCircle } from "lucide-react"
-import { registerUser, authenticateUser, validateEmail } from "../utils/auth"
+import { registerUser, authenticateUser, validateEmail, validatePasswordStrength } from "../utils/auth"
 
 export default function SignUpModal({ onClose, onSignUpSuccess }) {
   const [formData, setFormData] = useState({
@@ -42,8 +42,11 @@ export default function SignUpModal({ onClose, onSignUpSuccess }) {
       return
     }
 
-    if (formData.password.length < 6) {
-      setError("Password must be at least 6 characters long")
+    // Use the same password rules as the rest of the system (plain English):
+    // - This avoids a frustrating situation where the UI says "ok" but backend rejects it.
+    const pwErrors = validatePasswordStrength(formData.password)
+    if (pwErrors.length > 0) {
+      setError(pwErrors[0])
       setLoading(false)
       return
     }

@@ -4,11 +4,13 @@ import { useState, useEffect } from "react"
 import { toast } from "sonner"
 import TopBar from "../components/TopBar"
 import { registerUser, getAllUsers, deactivateUser, getAdminIdForStorage, validatePasswordStrength } from "../utils/auth"
+import { getAllBranches } from "../services/branchService"
 import { Users, UserPlus, UserX, Check, X } from "lucide-react"
 
 export default function BranchStaffPage({ currentUser }) {
   const [cashiers, setCashiers] = useState([])
   const [loading, setLoading] = useState(true)
+  const [branchDisplayName, setBranchDisplayName] = useState("")
   const [showAddModal, setShowAddModal] = useState(false)
   const [newCashier, setNewCashier] = useState({
     name: '',
@@ -23,7 +25,55 @@ export default function BranchStaffPage({ currentUser }) {
     }
   })
 
-  // Check if user is authorized (must be a manager)
+  useEffect(() => {
+    if (currentUser?.role !== 'manager') return
+    if (!currentUser?.branchId) return
+    loadCashiers()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role, currentUser?.branchId])
+
+  // Resolve branch ID to human-readable name for "Manage cashiers for branch: ..."
+  useEffect(() => {
+    if (currentUser?.role !== 'manager' || !currentUser?.branchId) {
+      setBranchDisplayName('')
+      return
+    }
+    const branchId = currentUser.branchId
+    let cancelled = false
+    getAllBranches()
+      .then((branches) => {
+        if (cancelled) return
+        const match = (branches || []).find((b) => b.id === branchId)
+        setBranchDisplayName(match?.name || branchId)
+      })
+      .catch(() => {
+        if (!cancelled) setBranchDisplayName(branchId)
+      })
+    return () => { cancelled = true }
+  }, [currentUser?.role, currentUser?.branchId])
+
+  const loadCashiers = async () => {
+    try {
+      setLoading(true)
+      const adminId = getAdminIdForStorage(currentUser)
+      const allUsers = await getAllUsers(adminId)
+      
+      // Filter to show only cashiers in the same branch
+      const branchCashiers = allUsers.filter(user => 
+        user.role === 'cashier' && 
+        user.branchId === currentUser.branchId
+      )
+      
+      setCashiers(branchCashiers)
+    } catch (error) {
+      console.error('Error loading cashiers:', error)
+      toast.error('Failed to load cashiers')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Render guards (keep AFTER hooks to avoid React hook mismatch crashes)
   if (currentUser?.role !== 'manager') {
     return (
       <div className="flex flex-col h-screen bg-background">
@@ -46,7 +96,6 @@ export default function BranchStaffPage({ currentUser }) {
     )
   }
 
-  // Check if manager has a branchId
   if (!currentUser?.branchId) {
     return (
       <div className="flex flex-col h-screen bg-background">
@@ -67,31 +116,6 @@ export default function BranchStaffPage({ currentUser }) {
         </div>
       </div>
     )
-  }
-
-  useEffect(() => {
-    loadCashiers()
-  }, [currentUser])
-
-  const loadCashiers = async () => {
-    try {
-      setLoading(true)
-      const adminId = getAdminIdForStorage(currentUser)
-      const allUsers = await getAllUsers(adminId)
-      
-      // Filter to show only cashiers in the same branch
-      const branchCashiers = allUsers.filter(user => 
-        user.role === 'cashier' && 
-        user.branchId === currentUser.branchId
-      )
-      
-      setCashiers(branchCashiers)
-    } catch (error) {
-      console.error('Error loading cashiers:', error)
-      toast.error('Failed to load cashiers')
-    } finally {
-      setLoading(false)
-    }
   }
 
   const handleAddCashier = async () => {
@@ -181,7 +205,7 @@ export default function BranchStaffPage({ currentUser }) {
             <div>
               <h1 className="text-2xl font-bold text-foreground">My Cashiers</h1>
               <p className="text-muted-foreground">
-                Manage cashiers for branch: <span className="font-semibold">{currentUser.branchId}</span>
+                Manage cashiers for branch: <span className="font-semibold">{branchDisplayName || currentUser.branchId}</span>
               </p>
             </div>
             <button

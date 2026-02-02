@@ -3,7 +3,7 @@
 //   db, collectionPath, adminId, onUpdate, onError
 // })
 
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query as fsQuery } from 'firebase/firestore';
 
 /**
  * Subscribe to a Firestore collection for a specific admin (real-time updates)
@@ -15,7 +15,7 @@ import { collection, onSnapshot } from 'firebase/firestore';
  * @param {function} [params.onError] - Callback for errors
  * @returns {function} Unsubscribe function
  */
-export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, onError }) {
+export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, onError, queryConstraints = [] }) {
   // Firestore instances don't have a stable `type` field; the previous check caused
   // realtime subscriptions to be skipped and forced IndexedDB fallback.
   //
@@ -24,7 +24,10 @@ export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, o
   //
   // (adminId is already encoded in the path, so no `where('adminId','==',...)` needed)
   if (db && typeof window !== 'undefined' && adminId) {
-    const colRef = collection(db, 'organizations', adminId, collectionPath);
+    let colRef = collection(db, 'organizations', adminId, collectionPath);
+    if (Array.isArray(queryConstraints) && queryConstraints.length > 0) {
+      colRef = fsQuery(colRef, ...queryConstraints)
+    }
     const unsubscribe = onSnapshot(
       colRef,
       (snapshot) => {

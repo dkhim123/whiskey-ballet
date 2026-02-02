@@ -7,7 +7,8 @@ import AdminTrashBin from "../components/AdminTrashBin"
 import TransactionDetailsModal from "../components/TransactionDetailsModal"
 import BranchSelector from "../components/BranchSelector"
 import { getAdminIdForStorage } from "../utils/auth"
-import { subscribeToTransactions } from "../services/realtimeListeners"
+import { subscribeToTransactions, subscribeToUsersByBranch } from "../services/realtimeListeners"
+import { getAllBranches } from "../services/branchService"
 import { exportTransactionsToCSV } from "../utils/csvExport"
 import { getFirstName } from "../utils/nameHelpers"
 
@@ -20,10 +21,21 @@ export default function TransactionsHistoryPage({ currentUser }) {
   const [showTrashBin, setShowTrashBin] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showCancelled, setShowCancelled] = useState(true) // Show cancelled by default
-  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
+  const [selectedBranch, setSelectedBranch] = useState(() => {
+    if (typeof window === 'undefined') return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    try {
+      return currentUser?.role === 'admin'
+        ? (localStorage.getItem('adminSelectedBranch') || '')
+        : (currentUser?.branchId || '')
+    } catch {
+      return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    }
+  })
   const [selectedCashier, setSelectedCashier] = useState('')
   const [cashiers, setCashiers] = useState([])
-  
+  // Resolved branch name for manager view (shows "Nakuru Branch" instead of branch ID)
+  const [branchDisplayName, setBranchDisplayName] = useState('')
+
   // Filter states
   const [dateFilter, setDateFilter] = useState('all') // 'today', 'week', 'month', 'all', 'custom'
   const [paymentFilter, setPaymentFilter] = useState('all') // 'all', 'cash', 'mpesa'
@@ -42,14 +54,23 @@ export default function TransactionsHistoryPage({ currentUser }) {
     let unsub = null;
     unsub = subscribeToTransactions(adminId, (allTransactions) => {
       let filteredTransactions = allTransactions;
-      // Simulate users list as empty (for cashiers list, you may want a real-time users listener)
-      const users = [];
+      // Load cashiers list in realtime for manager/admin filtering
       if (currentUser.role === 'cashier') {
         const cashierBranch = currentUser.branchId;
         if (!cashierBranch) {
           filteredTransactions = [];
         } else {
           filteredTransactions = allTransactions.filter(t => t.branchId === cashierBranch);
+        }
+      } else if (currentUser.role === 'manager') {
+        const managerBranch = currentUser.branchId
+        if (!managerBranch) {
+          filteredTransactions = []
+        } else {
+          filteredTransactions = allTransactions.filter(t => t.branchId === managerBranch)
+        }
+        if (selectedCashier) {
+          filteredTransactions = filteredTransactions.filter(t => t.userId === selectedCashier)
         }
       } else if (currentUser.role === 'admin') {
         if (selectedBranch) {
@@ -58,18 +79,52 @@ export default function TransactionsHistoryPage({ currentUser }) {
         if (selectedCashier) {
           filteredTransactions = filteredTransactions.filter(t => t.userId === selectedCashier);
         }
-        // TODO: Update cashiers list with a real-time users listener if needed
-        setCashiers([]);
-        if (selectedCashier && ![].some(c => c.id === selectedCashier)) {
-          setSelectedCashier('');
-        }
       }
       const sortedTransactions = filteredTransactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       setTransactions(sortedTransactions);
       setLoading(false);
     });
-    return () => { if (unsub) unsub(); };
+
+    // Cashier dropdown support (admin + manager)
+    let unsubUsers = null
+    if (currentUser.role === 'manager' && currentUser.branchId) {
+      unsubUsers = subscribeToUsersByBranch(adminId, currentUser.branchId, (users) => {
+        const list = (users || []).filter(u => u.role === 'cashier' && u.isActive)
+        setCashiers(list)
+        if (selectedCashier && !list.some(c => c.id === selectedCashier)) {
+          setSelectedCashier('')
+        }
+      })
+    }
+    return () => {
+      try {
+        if (unsub) unsub()
+      } catch {}
+      try {
+        if (unsubUsers) unsubUsers()
+      } catch {}
+    };
   }, [currentUser, selectedBranch, selectedCashier]);
+
+  // Resolve manager's branch ID to human-readable name for Branch display
+  useEffect(() => {
+    if (currentUser?.role !== 'manager' || !currentUser?.branchId) {
+      setBranchDisplayName('')
+      return
+    }
+    const branchId = currentUser.branchId
+    let cancelled = false
+    getAllBranches()
+      .then((branches) => {
+        if (cancelled) return
+        const match = (branches || []).find((b) => b.id === branchId)
+        setBranchDisplayName(match?.name || branchId)
+      })
+      .catch(() => {
+        if (!cancelled) setBranchDisplayName(branchId)
+      })
+    return () => { cancelled = true }
+  }, [currentUser?.role, currentUser?.branchId]);
 
   const handleCancelTransaction = async (transaction) => {
     try {
@@ -295,6 +350,9 @@ export default function TransactionsHistoryPage({ currentUser }) {
                 selectedBranch={selectedBranch}
                 onBranchChange={(branchId) => {
                   setSelectedBranch(branchId)
+                  try {
+                    localStorage.setItem('adminSelectedBranch', branchId || '')
+                  } catch {}
                   setSelectedCashier('') // Reset cashier when branch changes
                   setCurrentPage(1)
                 }}
@@ -314,6 +372,43 @@ export default function TransactionsHistoryPage({ currentUser }) {
                   className="w-full px-4 py-2 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   <option value="">All Cashiers</option>
+                  {cashiers.map(cashier => (
+                    <option key={cashier.id} value={cashier.id}>
+                      {cashier.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Manager: Branch locked + cashier filter */}
+      {currentUser?.role === 'manager' && currentUser.branchId && (
+        <div className="px-6 py-4 bg-muted/30 border-b border-border">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+            <div className="flex-1">
+              <div className="text-sm font-medium text-muted-foreground mb-2">Branch</div>
+              <div className="inline-flex items-center gap-2 px-3 py-2 bg-background border border-border rounded-lg">
+                <span className="text-xs text-muted-foreground">Locked:</span>
+                <span className="text-sm font-bold text-foreground">{branchDisplayName || currentUser.branchId}</span>
+              </div>
+            </div>
+            {cashiers.length > 0 && (
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-muted-foreground mb-2">
+                  Filter by Cashier
+                </label>
+                <select
+                  value={selectedCashier}
+                  onChange={(e) => {
+                    setSelectedCashier(e.target.value)
+                    setCurrentPage(1)
+                  }}
+                  className="w-full px-4 py-2 border border-input rounded-lg bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="">All Cashiers ({cashiers.length})</option>
                   {cashiers.map(cashier => (
                     <option key={cashier.id} value={cashier.id}>
                       {cashier.name}

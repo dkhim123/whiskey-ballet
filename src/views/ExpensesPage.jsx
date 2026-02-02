@@ -6,13 +6,23 @@ import AccountabilityModal from "../components/AccountabilityModal"
 import BranchSelector from "../components/BranchSelector"
 import { getAdminIdForStorage } from "../utils/auth"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
-// TODO: Implement subscribeToExpenses for admin real-time
+import { subscribeToExpenses, subscribeToTransactions } from "../services/realtimeListeners"
 import { exportExpensesToCSV } from "../utils/csvExport"
 
 export default function ExpensesPage({ currentUser }) {
   const [expenses, setExpenses] = useState([])
   const [allExpenses, setAllExpenses] = useState([]) // Store all expenses for admin
-  const [selectedBranch, setSelectedBranch] = useState(currentUser?.role === 'admin' ? '' : currentUser?.branchId || '')
+  const [allTransactions, setAllTransactions] = useState([]) // For metrics (realtime when online)
+  const [selectedBranch, setSelectedBranch] = useState(() => {
+    if (typeof window === 'undefined') return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    try {
+      return currentUser?.role === 'admin'
+        ? (localStorage.getItem('adminSelectedBranch') || '')
+        : (currentUser?.branchId || '')
+    } catch {
+      return currentUser?.role === 'admin' ? '' : (currentUser?.branchId || '')
+    }
+  })
   const [settings, setSettings] = useState({
     spendingLimitPercentage: 50,
     enableSpendingAlerts: true
@@ -26,19 +36,47 @@ export default function ExpensesPage({ currentUser }) {
   const [showAccountabilityModal, setShowAccountabilityModal] = useState(false)
   const [accountabilityType, setAccountabilityType] = useState(null)
 
-  // Real-time Firestore expenses listener for admin
+  // Realtime expenses + transactions (plain English):
+  // - Two browsers should show the same numbers because both listen to Firebase.
+  // - If offline, we fall back to cached reads.
   useEffect(() => {
-    if (!currentUser) return;
-    if (currentUser.role === 'admin') {
-      const adminId = getAdminIdForStorage(currentUser);
-      let unsub = null;
-      unsub = require('../services/realtimeExtraListeners').subscribeToExpenses(adminId, (data) => {
-        setAllExpenses(data);
-      });
-      return () => { if (unsub) unsub(); };
+    if (!currentUser) return
+    const adminId = getAdminIdForStorage(currentUser)
+    const canUseRealtime =
+      typeof window !== "undefined" &&
+      !!adminId &&
+      (typeof navigator === "undefined" ? true : navigator.onLine)
+
+    if (!canUseRealtime) {
+      // Offline fallback: keep current behavior (metrics effect will readSharedData)
+      return
     }
-    // Cashier logic remains as is
-  }, [currentUser, selectedBranch]);
+
+    const unsubExpenses = subscribeToExpenses(adminId, (data) => {
+      if (currentUser.role === "admin") {
+        setAllExpenses(data || [])
+      } else {
+        // Non-admin: strict branch isolation
+        const filtered = (data || []).filter(
+          (e) => !!e.branchId && e.branchId === currentUser.branchId
+        )
+        setExpenses(filtered)
+      }
+    })
+
+    const unsubTransactions = subscribeToTransactions(adminId, (data) => {
+      setAllTransactions(data || [])
+    })
+
+    return () => {
+      try {
+        unsubExpenses && unsubExpenses()
+      } catch {}
+      try {
+        unsubTransactions && unsubTransactions()
+      } catch {}
+    }
+  }, [currentUser?.id, currentUser?.role, currentUser?.branchId])
 
   const [metrics, setMetrics] = useState({ income: 0, expenses: 0, cashIncome: 0, mpesaIncome: 0 })
   const [filteredExpenses, setFilteredExpenses] = useState([])
@@ -55,8 +93,13 @@ export default function ExpensesPage({ currentUser }) {
         }
 
         const adminId = getAdminIdForStorage(currentUser)
-        const sharedData = await readSharedData(adminId)
-        const transactions = sharedData.transactions || []
+
+        // Prefer realtime transactions when available; otherwise fall back to cached read.
+        let transactions = allTransactions
+        if (!transactions || transactions.length === 0) {
+          const sharedData = await readSharedData(adminId)
+          transactions = sharedData.transactions || []
+        }
         
         // Calculate start date based on dateRange
         const now = new Date()
@@ -175,7 +218,7 @@ export default function ExpensesPage({ currentUser }) {
       }
     }
     loadMetrics()
-  }, [expenses, dateRange, currentUser, searchTerm, selectedBranch])
+  }, [expenses, allTransactions, dateRange, currentUser, searchTerm, selectedBranch])
 
   const totalExpenses = filteredExpenses.reduce((sum, e) => {
     const amount = parseFloat(e.amount) || 0
@@ -425,6 +468,9 @@ export default function ExpensesPage({ currentUser }) {
             selectedBranch={selectedBranch}
             onBranchChange={(branchId) => {
               setSelectedBranch(branchId)
+              try {
+                localStorage.setItem('adminSelectedBranch', branchId || '')
+              } catch {}
             }}
           />
           <p className="text-sm text-muted-foreground mt-2">
@@ -448,8 +494,8 @@ export default function ExpensesPage({ currentUser }) {
       )}
 
       <div className="p-6 flex-1 overflow-auto">
-        {/* Spending Limit Alert */}
-        {isOverLimit && (
+        {/* Spending Limit Alert - only for cashiers (accountability) */}
+        {currentUser?.role === 'cashier' && isOverLimit && (
           <div className="mb-4 bg-linear-to-r from-destructive/10 via-destructive/5 to-destructive/10 border-2 border-destructive rounded-xl p-5 shadow-lg animate-pulse-slow">
             <h3 className="font-bold text-destructive mb-2 flex items-center gap-3 text-xl">
               <span className="text-3xl">⚠️</span>
@@ -483,23 +529,22 @@ export default function ExpensesPage({ currentUser }) {
           ))}
         </div>
 
-        {/* Stats Cards */}
+        {/* Stats Cards - accountability (click to open modal) only for cashiers */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div 
-            className="bg-linear-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02] cursor-pointer"
-            onClick={() => {
-              setAccountabilityType('sales')
-              setShowAccountabilityModal(true)
-            }}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                setAccountabilityType('sales')
-                setShowAccountabilityModal(true)
+            className={`bg-linear-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg transition-all ${currentUser?.role === 'cashier' ? 'hover:shadow-xl hover:scale-[1.02] cursor-pointer' : ''}`}
+            {...(currentUser?.role === 'cashier' ? {
+              onClick: () => { setAccountabilityType('sales'); setShowAccountabilityModal(true) },
+              role: 'button',
+              tabIndex: 0,
+              onKeyDown: (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setAccountabilityType('sales')
+                  setShowAccountabilityModal(true)
+                }
               }
-            }}
+            } : {})}
           >
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm opacity-90 font-medium">💰 Total Income</div>
@@ -520,20 +565,19 @@ export default function ExpensesPage({ currentUser }) {
             </div>
           </div>
           <div 
-            className="bg-linear-to-br from-red-500 to-red-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02] cursor-pointer"
-            onClick={() => {
-              setAccountabilityType('expenses')
-              setShowAccountabilityModal(true)
-            }}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                setAccountabilityType('expenses')
-                setShowAccountabilityModal(true)
+            className={`bg-linear-to-br from-red-500 to-red-600 text-white rounded-xl p-6 shadow-lg transition-all ${currentUser?.role === 'cashier' ? 'hover:shadow-xl hover:scale-[1.02] cursor-pointer' : ''}`}
+            {...(currentUser?.role === 'cashier' ? {
+              onClick: () => { setAccountabilityType('expenses'); setShowAccountabilityModal(true) },
+              role: 'button',
+              tabIndex: 0,
+              onKeyDown: (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setAccountabilityType('expenses')
+                  setShowAccountabilityModal(true)
+                }
               }
-            }}
+            } : {})}
           >
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm opacity-90 font-medium">💸 Total Expenses</div>
@@ -546,28 +590,31 @@ export default function ExpensesPage({ currentUser }) {
               {filteredExpenses.length} expense{filteredExpenses.length !== 1 ? 's' : ''} recorded
             </div>
           </div>
-          <div className="bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg hover:shadow-xl transition-all hover:scale-[1.02]">
+          <div className="bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg transition-all">
             <div className="text-sm opacity-90 mb-3 font-medium">📊 Net Profit</div>
             <div className={`text-4xl font-bold mb-2`}>
               KES {(metrics.income - metrics.expenses).toLocaleString()}
             </div>
-            <div className="text-sm opacity-90">
-              <div className="flex justify-between items-center">
-                <span>Expense Ratio:</span>
-                <span className={`font-bold text-lg ${isOverLimit ? 'text-yellow-300' : 'text-white'}`}>
-                  {expensePercentage.toFixed(1)}%
-                </span>
+            {/* Expense Ratio & Limit only for cashiers (accountability); hidden for admin/manager */}
+            {currentUser?.role === 'cashier' && (
+              <div className="text-sm opacity-90">
+                <div className="flex justify-between items-center">
+                  <span>Expense Ratio:</span>
+                  <span className={`font-bold text-lg ${isOverLimit ? 'text-yellow-300' : 'text-white'}`}>
+                    {expensePercentage.toFixed(1)}%
+                  </span>
+                </div>
+                <div className="mt-2 bg-white/20 rounded-full h-2 overflow-hidden">
+                  <div 
+                    className={`h-full transition-all ${isOverLimit ? 'bg-yellow-300' : 'bg-white'}`}
+                    style={{ width: `${Math.min(expensePercentage, 100)}%` }}
+                  ></div>
+                </div>
+                <div className="text-xs mt-1 opacity-75">
+                  Limit: {settings.spendingLimitPercentage}%
+                </div>
               </div>
-              <div className="mt-2 bg-white/20 rounded-full h-2 overflow-hidden">
-                <div 
-                  className={`h-full transition-all ${isOverLimit ? 'bg-yellow-300' : 'bg-white'}`}
-                  style={{ width: `${Math.min(expensePercentage, 100)}%` }}
-                ></div>
-              </div>
-              <div className="text-xs mt-1 opacity-75">
-                Limit: {settings.spendingLimitPercentage}%
-              </div>
-            </div>
+            )}
           </div>
         </div>
 
@@ -673,8 +720,8 @@ export default function ExpensesPage({ currentUser }) {
         />
       )}
 
-      {/* Accountability Modal */}
-      {showAccountabilityModal && (
+      {/* Accountability Modal - only available for cashiers */}
+      {currentUser?.role === 'cashier' && showAccountabilityModal && (
         <AccountabilityModal
           type={accountabilityType}
           onClose={() => setShowAccountabilityModal(false)}

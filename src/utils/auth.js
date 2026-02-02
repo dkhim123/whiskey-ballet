@@ -5,8 +5,9 @@
 
 import bcrypt from 'bcryptjs'
 import { writeUserToRealtimeDB, readEntityFromRealtimeDB } from './firebaseRealtime'
-import { auth, db, isFirebaseConfigured } from '../config/firebase'
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
+import { app, auth, db, isFirebaseConfigured } from '../config/firebase'
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, getAuth, signOut, deleteUser } from 'firebase/auth'
+import { initializeApp, deleteApp } from 'firebase/app'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 
 const USERS_STORAGE_KEY = 'pos-users-db'
@@ -422,12 +423,90 @@ export const registerUser = async (name, email, password, role, createdBy = null
       return { success: false, error: 'Invalid role' }
     }
 
-    // Security: Prevent cashier/manager self-registration
-    // Cashier and manager accounts can only be created by admins
-    // Admin accounts can self-register (no createdBy means self-registration)
     const users = await getUsersFromStorage()
-    if ((sanitizedRole === 'cashier' || sanitizedRole === 'manager') && !createdBy) {
-      return { success: false, error: 'Cashier and manager accounts can only be created by administrators' }
+
+    // Helper: normalize ids so we can match numeric local IDs and Firebase UIDs.
+    const normalizeId = (value) => {
+      if (typeof value === 'string' && value.trim()) return value.trim()
+      if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+      return null
+    }
+
+    // Helper: find creator/admin record by either local id or firebase uid.
+    const creatorId = normalizeId(createdBy)
+    let creator = creatorId
+      ? users.find(u => normalizeId(u.id) === creatorId || normalizeId(u.firebaseUid) === creatorId)
+      : null
+
+    // Plain English:
+    // On web, `pos-users-db` lives in *this browser only*. When a manager logs in from a
+    // different browser/device, their creator record may not exist in localStorage.
+    //
+    // Fix: if we didn't find the creator locally, try Firestore `userProfiles/{uid}`
+    // (this is global + realtime across all browsers).
+    if (!creator && creatorId && isFirebaseConfigured() && db) {
+      try {
+        const creatorProfileRef = doc(db, 'userProfiles', creatorId)
+        const creatorSnap = await getDoc(creatorProfileRef)
+        if (creatorSnap.exists()) {
+          const profile = creatorSnap.data() || {}
+          creator = {
+            id: creatorId,
+            firebaseUid: creatorId,
+            ...profile,
+          }
+        }
+      } catch (e) {
+        // ignore and fall back to the normal error below
+      }
+    }
+
+    // Extra fallback: if the caller passed "createdBy" as blank/old ID, but the current
+    // Firebase session is present, use that UID's profile as the creator.
+    if (!creator && isFirebaseConfigured() && db && auth?.currentUser?.uid) {
+      try {
+        const uid = auth.currentUser.uid
+        const creatorProfileRef = doc(db, 'userProfiles', uid)
+        const creatorSnap = await getDoc(creatorProfileRef)
+        if (creatorSnap.exists()) {
+          const profile = creatorSnap.data() || {}
+          creator = {
+            id: uid,
+            firebaseUid: uid,
+            ...profile,
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // Security rules (plain English):
+    // - Admin can self-register.
+    // - Admin can create managers and cashiers.
+    // - Manager can create cashiers (for their own branch).
+    // - Cashier cannot create users.
+    if (sanitizedRole !== 'admin') {
+      if (!creatorId) {
+        return { success: false, error: 'This account must be created by an administrator (or manager for cashiers).' }
+      }
+      if (!creator) {
+        return { success: false, error: 'Creator account not found. Please login again and retry.' }
+      }
+      if (sanitizedRole === 'manager') {
+        if (creator.role !== 'admin') {
+          return { success: false, error: 'Manager accounts can only be created by administrators' }
+        }
+      }
+      if (sanitizedRole === 'cashier') {
+        if (creator.role !== 'admin' && creator.role !== 'manager') {
+          return { success: false, error: 'Cashier accounts can only be created by administrators or managers' }
+        }
+        // Managers can only create cashiers for their own branch
+        if (creator.role === 'manager' && creator.branchId && branchId && creator.branchId !== branchId) {
+          return { success: false, error: 'Managers can only create cashiers for their own branch' }
+        }
+      }
     }
 
     // Check if user already exists
@@ -437,11 +516,29 @@ export const registerUser = async (name, email, password, role, createdBy = null
 
     // Create user in Firebase Auth (only if Firebase is configured)
     let authUser = null
+    let secondaryApp = null
+    let secondaryAuth = null
+    let createdWithSecondaryAuth = false
     const firebaseConfigured = isFirebaseConfigured()
     
     if (firebaseConfigured && auth) {
       try {
-        authUser = await createUserWithEmailAndPassword(auth, sanitizedEmail, password)
+        // CRITICAL (plain English):
+        // - Using createUserWithEmailAndPassword(auth, ...) on the primary auth instance
+        //   will sign out the current admin and sign in as the new user.
+        // - That breaks provisioning because Firestore writes then run as the new user
+        //   (and are blocked by security rules), causing "not provisioned" login failures.
+        //
+        // Fix: create the account using a SECONDARY auth instance so the admin stays logged in.
+        if (typeof window !== 'undefined' && app?.options) {
+          secondaryApp = initializeApp(app.options, `wb-secondary-${Date.now()}`)
+          secondaryAuth = getAuth(secondaryApp)
+          createdWithSecondaryAuth = true
+          authUser = await createUserWithEmailAndPassword(secondaryAuth, sanitizedEmail, password)
+        } else {
+          // Fallback (should be rare): default behavior
+          authUser = await createUserWithEmailAndPassword(auth, sanitizedEmail, password)
+        }
       } catch (authError) {
         if (authError.code === 'auth/email-already-in-use') {
           return { success: false, error: 'User with this email already exists in Firebase Auth' }
@@ -457,6 +554,15 @@ export const registerUser = async (name, email, password, role, createdBy = null
     const passwordHash = await hashPassword(password)
     const newUserId = users.length > 0 ? Math.max(...users.map(u => u.id)) + 1 : 1
     const firebaseUid = authUser?.user?.uid || null
+    // Determine org/adminId (needed for Firestore paths + Storage rules)
+    // - For admin self-register: adminId will be their firebaseUid (set below for cloud profile)
+    // - For users created by admin: adminId is the admin's id/firebaseUid
+    // - For users created by manager: adminId is the manager's adminId (or createdBy chain)
+    const orgAdminId =
+      sanitizedRole === 'admin'
+        ? null
+        : normalizeId(creator?.adminId) || (creator?.role === 'admin' ? normalizeId(creator?.firebaseUid) || normalizeId(creator?.id) : normalizeId(creator?.createdBy))
+
     const newUser = {
       id: newUserId,
       firebaseUid,
@@ -467,6 +573,7 @@ export const registerUser = async (name, email, password, role, createdBy = null
       createdAt: new Date().toISOString(),
       isActive: true,
       createdBy: createdBy,
+      adminId: sanitizedRole === 'admin' ? null : (orgAdminId || null),
       branchId: branchId || null
     }
     
@@ -483,10 +590,23 @@ export const registerUser = async (name, email, password, role, createdBy = null
 
     // Write user profile to Firestore (preferred) so admin can monitor in real-time.
     // Also keep legacy RTDB write for backward compatibility.
+    let firestoreProvisioned = false
     if (firebaseConfigured && firebaseUid && db) {
       try {
+        // Plain English:
+        // Some Firestore rules depend on custom claims (role/adminId).
+        // For reliability, refresh the creator's token before provisioning.
+        try {
+          await auth?.currentUser?.getIdToken(true)
+        } catch {
+          // ignore
+        }
+
         // Determine the org/adminId for cloud storage
-        const adminIdForCloud = sanitizedRole === 'admin' ? firebaseUid : createdBy
+        // IMPORTANT:
+        // - For admin: adminId is their own Firebase UID.
+        // - For manager/cashier: adminId is the ORGANIZATION adminId (not necessarily the creator's id).
+        const adminIdForCloud = sanitizedRole === 'admin' ? firebaseUid : (orgAdminId || creatorId)
         const profile = {
           uid: firebaseUid,
           adminId: adminIdForCloud,
@@ -507,8 +627,41 @@ export const registerUser = async (name, email, password, role, createdBy = null
         if (adminIdForCloud) {
           await setDoc(doc(db, 'organizations', adminIdForCloud, 'users', firebaseUid), profile, { merge: true })
         }
+        firestoreProvisioned = true
       } catch (firestoreError) {
-        console.warn('Error writing user profile to Firestore (continuing):', firestoreError)
+        console.warn('Error writing user profile to Firestore:', firestoreError)
+      }
+    }
+
+    // CRITICAL (plain English):
+    // If Firebase Auth account was created but Firestore provisioning failed, the new cashier/manager
+    // will be BLOCKED at login ("not provisioned for POS access"). So we fail fast and roll back.
+    if (firebaseConfigured && firebaseUid && db && !firestoreProvisioned) {
+      // Try to delete the just-created Auth user to avoid leaving a broken account behind.
+      try {
+        if (authUser?.user) {
+          await deleteUser(authUser.user)
+        }
+      } catch (rollbackError) {
+        console.warn('Rollback failed (could not delete newly created Firebase Auth user):', rollbackError)
+      }
+
+      // Cleanup secondary app if we used it
+      if (createdWithSecondaryAuth && secondaryAuth) {
+        try {
+          await signOut(secondaryAuth)
+        } catch {}
+      }
+      if (createdWithSecondaryAuth && secondaryApp) {
+        try {
+          await deleteApp(secondaryApp)
+        } catch {}
+      }
+
+      return {
+        success: false,
+        error:
+          'Cashier account creation started, but provisioning failed (no Firestore profile). Please log out and log back in to refresh permissions, then try again. If it still fails, check Firestore rules / Cloud Functions deployment.',
       }
     }
 
@@ -518,6 +671,22 @@ export const registerUser = async (name, email, password, role, createdBy = null
         await writeUserToRealtimeDB(newUser)
       } catch (dbError) {
         console.warn('Error writing user to Realtime DB (continuing in offline mode):', dbError)
+      }
+    }
+
+    // Cleanup secondary app if we used it
+    if (createdWithSecondaryAuth && secondaryAuth) {
+      try {
+        await signOut(secondaryAuth)
+      } catch {
+        // ignore
+      }
+    }
+    if (createdWithSecondaryAuth && secondaryApp) {
+      try {
+        await deleteApp(secondaryApp)
+      } catch {
+        // ignore
       }
     }
 
@@ -536,7 +705,7 @@ export const registerUser = async (name, email, password, role, createdBy = null
         createdBy: createdBy,
         branchId: branchId || null,
         // Org isolation id (needed for Firestore paths + Storage rules)
-        adminId: sanitizedRole === 'admin' ? (firebaseUid || null) : (createdBy || null)
+        adminId: sanitizedRole === 'admin' ? (firebaseUid || null) : (orgAdminId || null)
       },
       firebaseAuth: !!authUser
     }
@@ -617,19 +786,30 @@ export const getAdminIdForStorage = (user) => {
  */
 export const getAllUsers = async (adminId = null) => {
   const users = await getUsersFromStorage()
+
+  const normalizeId = (value) => {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+    return null
+  }
   
-  // If adminId is provided, filter to show only users created by this admin
-  // and the admin themselves
+  // If adminId is provided, treat it as the ORGANIZATION id:
+  // - Include users whose adminId matches the org
+  // - Include the org admin themselves (by firebaseUid/id match)
   let filteredUsers = users
   if (adminId !== null) {
+    const orgId = normalizeId(adminId)
     filteredUsers = users.filter(user => 
-      user.id === adminId || // Include the admin themselves
-      user.createdBy === adminId // Include only users created by this admin
+      normalizeId(user.adminId) === orgId ||
+      normalizeId(user.firebaseUid) === orgId ||
+      normalizeId(user.id) === orgId
     )
   }
   
   return filteredUsers.map(user => ({
-    id: user.id,
+    // Prefer firebase uid when available so admin actions can update Firestore correctly
+    id: user.firebaseUid || user.id,
+    localId: user.id,
     firebaseUid: user.firebaseUid || null,
     email: user.email,
     role: user.role,
@@ -637,6 +817,7 @@ export const getAllUsers = async (adminId = null) => {
     isActive: user.isActive,
     createdAt: user.createdAt,
     createdBy: user.createdBy,
+    adminId: user.adminId || null,
     branchId: user.branchId // CRITICAL: Include branch assignment
   }))
 }
@@ -738,6 +919,12 @@ export const updateUserBranch = async (userId, branchId, adminEmail) => {
     
     const users = await getUsersFromStorage()
     console.log('👥 Loaded users:', users.length)
+
+    const normalizeId = (value) => {
+      if (typeof value === 'string' && value.trim()) return value.trim()
+      if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+      return null
+    }
     
     const admin = users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase())
     console.log('🔐 Admin check:', admin ? `Found: ${admin.email}` : 'Not found')
@@ -747,7 +934,11 @@ export const updateUserBranch = async (userId, branchId, adminEmail) => {
       return { success: false, error: 'Unauthorized' }
     }
     
-    const userIndex = users.findIndex(u => u.id === userId)
+    // Allow matching by either local numeric id OR firebase uid string.
+    const targetId = normalizeId(userId)
+    const userIndex = users.findIndex(u =>
+      normalizeId(u.id) === targetId || normalizeId(u.firebaseUid) === targetId
+    )
     console.log('🔍 User index:', userIndex, 'User ID to update:', userId)
     
     if (userIndex === -1) {
@@ -769,7 +960,7 @@ export const updateUserBranch = async (userId, branchId, adminEmail) => {
       const firebaseConfigured = isFirebaseConfigured()
       const currentSessionUser = JSON.parse(localStorage.getItem('currentUser') || '{}')
       const adminIdForCloud = currentSessionUser?.adminId || currentSessionUser?.id || null
-      const targetFirebaseUid = users[userIndex].firebaseUid
+    const targetFirebaseUid = users[userIndex].firebaseUid
 
       if (firebaseConfigured && db && adminIdForCloud && targetFirebaseUid) {
         const patch = {
@@ -797,13 +988,21 @@ export const updateUserBranch = async (userId, branchId, adminEmail) => {
 export const deactivateUser = async (userId, adminEmail) => {
   try {
     const users = await getUsersFromStorage()
+    const normalizeId = (value) => {
+      if (typeof value === 'string' && value.trim()) return value.trim()
+      if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+      return null
+    }
     const admin = users.find(u => u.email.toLowerCase() === adminEmail.toLowerCase())
     
     if (!admin || admin.role !== 'admin') {
       return { success: false, error: 'Unauthorized' }
     }
     
-    const userIndex = users.findIndex(u => u.id === userId)
+    const targetId = normalizeId(userId)
+    const userIndex = users.findIndex(u =>
+      normalizeId(u.id) === targetId || normalizeId(u.firebaseUid) === targetId
+    )
     
     if (userIndex === -1) {
       return { success: false, error: 'User not found' }

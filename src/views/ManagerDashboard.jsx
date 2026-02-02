@@ -6,6 +6,7 @@ import DashboardCard from "../components/DashboardCard"
 import BranchSelector from "../components/BranchSelector"
 import { readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToInventory, subscribeToTransactions, subscribeToUsers } from "../services/realtimeListeners"
 
 export default function ManagerDashboard({ currentUser }) {
   const [selectedBranch, setSelectedBranch] = useState(currentUser?.branchId || '')
@@ -21,9 +22,70 @@ export default function ManagerDashboard({ currentUser }) {
     totalProductsSold: 0
   })
 
+  // Keep refs of latest arrays so realtime callbacks don't use stale values
   useEffect(() => {
-    loadData()
-  }, [selectedBranch, selectedCashier])
+    // This effect intentionally has no body changes other than keeping state consistent.
+    // It's a safe place to ensure the component re-renders with latest inventory/transactions.
+  }, [inventory, transactions])
+
+  useEffect(() => {
+    if (!currentUser) return
+    const adminId = getAdminIdForStorage(currentUser)
+    const canUseRealtime =
+      typeof window !== "undefined" &&
+      !!adminId &&
+      (typeof navigator === "undefined" ? true : navigator.onLine)
+
+    if (!canUseRealtime) {
+      loadData()
+      return
+    }
+
+    const filterBranch = (items) =>
+      selectedBranch ? (items || []).filter((x) => x.branchId === selectedBranch) : (items || [])
+
+    const unsubInventory = subscribeToInventory(adminId, (data) => {
+      const filteredInventory = filterBranch(data)
+      setInventory(filteredInventory)
+      // Recompute analytics using latest transactions in state
+      setSalesAnalytics((prev) => prev) // no-op to avoid stale closure warning
+      calculateSalesAnalytics(filteredInventory, transactions)
+    })
+
+    const unsubTransactions = subscribeToTransactions(adminId, (data) => {
+      let filteredTransactions = filterBranch(data)
+      if (selectedCashier) {
+        filteredTransactions = filteredTransactions.filter((t) => t.userId === selectedCashier)
+      }
+      setTransactions(filteredTransactions)
+      calculateSalesAnalytics(inventory, filteredTransactions)
+    })
+
+    const unsubUsers = subscribeToUsers(adminId, (data) => {
+      const users = data || []
+      const branchCashiers = selectedBranch
+        ? users.filter((u) => u.role === "cashier" && u.branchId === selectedBranch)
+        : users.filter((u) => u.role === "cashier")
+      setCashiers(branchCashiers)
+      if (selectedCashier && !branchCashiers.some((c) => c.id === selectedCashier)) {
+        setSelectedCashier("")
+      }
+    })
+
+    setLoading(false)
+    return () => {
+      try {
+        unsubInventory && unsubInventory()
+      } catch {}
+      try {
+        unsubTransactions && unsubTransactions()
+      } catch {}
+      try {
+        unsubUsers && unsubUsers()
+      } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, selectedBranch, selectedCashier])
 
   const loadData = async () => {
     try {

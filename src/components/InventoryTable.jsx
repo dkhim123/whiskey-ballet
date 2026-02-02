@@ -121,15 +121,17 @@ export default function InventoryTable({ items, onEdit, onBarcode, onAdjust, bra
               </div>
 
               <div className="flex gap-2 pt-3 border-t border-border/30">
+                {onEdit && (
+                  <button
+                    onClick={() => onEdit(item)}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-colors font-medium text-sm"
+                  >
+                    <EditIcon className="w-4 h-4" />
+                    Edit
+                  </button>
+                )}
                 <button
-                  onClick={() => onEdit(item)}
-                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-lg hover:bg-primary/20 transition-colors font-medium text-sm"
-                >
-                  <EditIcon className="w-4 h-4" />
-                  Edit
-                </button>
-                <button
-                  onClick={() => onBarcode(item)}
+                  onClick={() => onBarcode && onBarcode(item)}
                   className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-muted text-foreground rounded-lg hover:bg-muted/80 transition-colors font-medium text-sm"
                 >
                   <BarcodeIcon className="w-4 h-4" />
@@ -244,14 +246,20 @@ export default function InventoryTable({ items, onEdit, onBarcode, onAdjust, bra
                 </td>
                 <td className="px-6 py-4 text-center text-sm">
                   <div className="flex gap-2 justify-center">
+                    {onEdit && (
+                      <button
+                        onClick={() => onEdit(item)}
+                        className="p-2 hover:bg-primary/10 rounded-lg transition-colors"
+                        title="Edit product"
+                      >
+                        <EditIcon className="w-4 h-4 text-primary" />
+                      </button>
+                    )}
                     <button
-                      onClick={() => onEdit(item)}
-                      className="p-2 hover:bg-primary/10 rounded-lg transition-colors"
-                      title="Edit product"
+                      onClick={() => onBarcode && onBarcode(item)}
+                      className="p-2 hover:bg-muted rounded-lg transition-colors"
+                      title="View barcode"
                     >
-                      <EditIcon className="w-4 h-4 text-primary" />
-                    </button>
-                    <button onClick={() => onBarcode(item)} className="p-2 hover:bg-muted rounded-lg transition-colors" title="View barcode">
                       <BarcodeIcon className="w-4 h-4 text-muted-foreground" />
                     </button>
                     {onAdjust && (

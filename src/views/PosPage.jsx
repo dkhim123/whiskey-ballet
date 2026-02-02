@@ -13,6 +13,7 @@ import CreditSaleModal from "../components/CreditSaleModal"
 import Pagination from "../components/Pagination"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { subscribeToCustomers, subscribeToInventory, subscribeToTransactions } from "../services/realtimeListeners"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
 import { calculateCartTotals, calculateItemVAT } from "../utils/pricing"
@@ -47,7 +48,10 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
   // Debounce search for better performance
   const debouncedSearch = useDebounce(searchTerm, 300)
 
-  // Load shared data (inventory, transactions, customers) with auto-refresh
+  // Load shared data (inventory, transactions, customers).
+  // Plain English:
+  // - When online, use Firestore realtime listeners so other browsers update instantly.
+  // - When offline, fall back to reading cached local data.
   useEffect(() => {
     const loadSharedData = async () => {
       try {
@@ -119,15 +123,55 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
       }
     }
 
-    // Initial load
-    loadSharedData()
+    const adminId = currentUser ? getAdminIdForStorage(currentUser) : null
+    const branchId = currentUser?.branchId || null
+    const canUseRealtime =
+      typeof window !== "undefined" &&
+      !!adminId &&
+      // navigator.onLine avoids setting up listeners when clearly offline
+      (typeof navigator === "undefined" ? true : navigator.onLine)
 
-    // Auto-refresh every 5 seconds to sync with other users (admin/cashiers)
-    // This ensures real-time visibility of transactions and inventory changes
-    const interval = setInterval(loadSharedData, 5000)
+    if (!canUseRealtime) {
+      // Offline / no adminId: use cached reads
+      loadSharedData()
+      return
+    }
 
-    return () => clearInterval(interval)
-  }, [currentUser])
+    // Realtime subscriptions (Firestore)
+    const filterByBranchStrict = (items) => {
+      if (!branchId) return currentUser?.role === "cashier" ? [] : items
+      if (currentUser?.role === "admin") return items
+      // Strict: non-admins only see records explicitly assigned to their branch
+      return (items || []).filter((x) => !!x.branchId && x.branchId === branchId)
+    }
+
+    const unsubInventory = subscribeToInventory(adminId, (data) => {
+      const filtered = filterByBranchStrict(data || [])
+      setInventory(filtered)
+      if (onInventoryChange) onInventoryChange(filtered)
+    })
+    const unsubTransactions = subscribeToTransactions(adminId, (data) => {
+      const filtered = filterByBranchStrict(data || [])
+      setTransactions(filtered)
+    })
+    const unsubCustomers = subscribeToCustomers(adminId, (data) => {
+      const filtered = filterByBranchStrict(data || [])
+      setCustomers(filtered)
+    })
+
+    return () => {
+      try {
+        unsubInventory && unsubInventory()
+      } catch {}
+      try {
+        unsubTransactions && unsubTransactions()
+      } catch {}
+      try {
+        unsubCustomers && unsubCustomers()
+      } catch {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role, currentUser?.branchId])
 
   // Barcode scanner handler - captures barcode scanner input
   useEffect(() => {
