@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { toast } from "sonner"
 import TopBar from "../components/TopBar"
 import { getAdminIdForStorage } from "../utils/auth"
 import { subscribeToCustomers } from "../services/realtimeListeners"
@@ -48,7 +49,13 @@ export default function CustomersPage({ currentUser }) {
     try {
       const userId = currentUser?.id
       if (!userId) {
-        alert('User not authenticated')
+        toast.error('User not authenticated')
+        return
+      }
+
+      // Block if cashier/manager has no branchId
+      if ((currentUser.role === 'cashier' || currentUser.role === 'manager') && !currentUser.branchId) {
+        toast.error('You must be assigned to a branch to create customers. Please contact your administrator.')
         return
       }
 
@@ -59,7 +66,7 @@ export default function CustomersPage({ currentUser }) {
       const customerToAdd = {
         ...newCustomer,
         id: maxId + 1,
-        branchId: currentUser?.branchId || '',
+        branchId: currentUser?.branchId, // No fallback - validated above
         createdBy: {
           id: currentUser?.id,
           name: currentUser?.name || currentUser?.email,
@@ -102,7 +109,7 @@ export default function CustomersPage({ currentUser }) {
     try {
       const userId = currentUser?.id
       if (!userId) {
-        alert('User not authenticated')
+        toast.error('User not authenticated')
         return
       }
 
@@ -111,10 +118,13 @@ export default function CustomersPage({ currentUser }) {
       const allCustomers = sharedData.customers || []
       const updatedCustomers = allCustomers.map(c => {
         if (c.id === updatedCustomer.id) {
-          // Preserve or add branchId and createdBy if missing
+          // Preserve branchId - should already exist from creation
+          // Only fallback to current user's branch if somehow missing (data migration scenario)
+          const preservedBranchId = c.branchId || currentUser?.branchId
+          
           return {
             ...updatedCustomer,
-            branchId: updatedCustomer.branchId || c.branchId || currentUser?.branchId || '',
+            branchId: updatedCustomer.branchId || preservedBranchId,
             createdBy: c.createdBy || {
               id: currentUser?.id,
               name: currentUser?.name || currentUser?.email,
@@ -798,7 +808,13 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
     try {
       const userId = currentUser?.id
       if (!userId) {
-        alert('User not authenticated')
+        toast.error('User not authenticated')
+        return
+      }
+
+      // Block if cashier/manager has no branchId
+      if ((currentUser.role === 'cashier' || currentUser.role === 'manager') && !currentUser.branchId) {
+        toast.error('You must be assigned to a branch to record payments. Please contact your administrator.')
         return
       }
 
@@ -853,7 +869,7 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
         amount: paymentAmount,
         total: paymentAmount,
         userId: userId,
-        branchId: currentUser?.branchId || '',
+        branchId: currentUser?.branchId, // No fallback - validated above
         recordedBy: currentUser?.name || currentUser?.email || 'Unknown',
         paymentMethod: paymentMethod,
         paymentStatus: 'completed'
@@ -873,7 +889,7 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
         notes: `Customer loan payment - ${isFullyPaid ? 'Fully paid' : `Remaining: KES ${newLoanAmount.toLocaleString()}`}`,
         customerId: customer.id,
         createdBy: userId,
-        branchId: currentUser?.branchId || '',
+        branchId: currentUser?.branchId, // No fallback - validated above
         userId: userId,
         userName: currentUser?.name || currentUser?.email,
         type: 'income' // Mark as income to distinguish from expenses

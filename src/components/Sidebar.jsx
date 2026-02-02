@@ -77,36 +77,31 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
 
   const mainMenuItems = userRole === "admin"
     ? [
+        // Admin: Monitoring only - no operational features
         { id: "admin-dashboard", label: "Dashboard", icon: DashboardIcon },
-        { id: "pos", label: "POS System", icon: ShoppingCartIcon },
+        { id: "reports", label: "Reports", icon: ChartBarIcon },
+        { id: "expenses", label: "Expense Tracker", icon: CashIcon },
+        { id: "transactions-history", label: "Transaction History", icon: DocumentIcon },
+      ]
+    : userRole === "manager"
+    ? [
+        // Manager: Full branch operations + cashier management
+        { id: "manager-dashboard", label: "Dashboard", icon: DashboardIcon },
         { id: "inventory", label: "Inventory", icon: BoxIcon },
-        { id: "customers", label: "Customers", icon: UsersIcon },
         { id: "suppliers", label: "Suppliers", icon: UsersIcon },
         { id: "purchase-orders", label: "Purchase Orders", icon: DocumentIcon },
         { id: "supplier-payments", label: "Payments", icon: CashIcon },
         { id: "expenses", label: "Expense Tracker", icon: CashIcon },
         { id: "reports", label: "Reports", icon: ChartBarIcon },
         { id: "transactions-history", label: "Transaction History", icon: DocumentIcon },
-      ]
-    : userRole === "manager"
-    ? [
-        { id: "manager-dashboard", label: "Dashboard", icon: DashboardIcon },
-        { id: "inventory", label: "Inventory", icon: BoxIcon },
-        { id: "suppliers", label: "Suppliers", icon: UsersIcon },
-        { id: "purchase-orders", label: "Purchase Orders", icon: DocumentIcon },
-        { id: "supplier-payments", label: "Payments", icon: CashIcon },
-        { id: "reports", label: "Reports", icon: ChartBarIcon },
-        { id: "transactions-history", label: "Transaction History", icon: DocumentIcon },
+        { id: "branch-staff", label: "My Cashiers", icon: UsersIcon },
       ]
     : [
+        // Cashier: POS + limited features
         { id: "pos", label: "POS System", icon: ShoppingCartIcon },
         { id: "cashier-dashboard", label: "Dashboard", icon: DashboardIcon },
         { id: "inventory", label: "Inventory", icon: BoxIcon },
         { id: "customers", label: "Customers", icon: UsersIcon },
-        { id: "suppliers", label: "Suppliers", icon: UsersIcon },
-        { id: "purchase-orders", label: "Purchase Orders", icon: DocumentIcon },
-        { id: "reports", label: "Reports", icon: ChartBarIcon },
-        { id: "transactions-history", label: "Transaction History", icon: DocumentIcon },
       ]
 
   const commonSettingsItems = [
@@ -117,7 +112,6 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
     ? [
         { id: "admin-settings", label: "Admin Settings", icon: SettingsIcon },
         { id: "branch-management", label: "Branches", icon: SettingsIcon },
-        { id: "data-management", label: "Backup & Restore", icon: SettingsIcon },
         ...commonSettingsItems
       ]
     : commonSettingsItems

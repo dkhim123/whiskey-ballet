@@ -456,29 +456,14 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
           </div>
         </div>
 
-        {/* Quick Actions - Full Width */}
+        {/* Quick Actions - Full Width (Admin: Monitoring Only) */}
         <div className="mb-6">
           <h3 className="text-base font-bold text-foreground mb-3 flex items-center gap-2">
             <span>⚡</span>
             <span>Quick Actions</span>
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <button
-              onClick={() => onPageChange && onPageChange('pos')}
-              className="bg-linear-to-br from-blue-500/10 to-blue-600/5 hover:from-blue-500/20 hover:to-blue-600/10 border-2 border-blue-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-            >
-              <div className="text-3xl mb-2">🛒</div>
-              <div className="text-sm font-bold text-blue-700 dark:text-blue-400">New Sale</div>
-              <div className="text-xs text-muted-foreground mt-1">Start transaction</div>
-            </button>
-            <button
-              onClick={() => onPageChange && onPageChange('inventory')}
-              className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-            >
-              <div className="text-3xl mb-2">📦</div>
-              <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Inventory</div>
-              <div className="text-xs text-muted-foreground mt-1">Manage stock</div>
-            </button>
+            {/* Admin can only access monitoring pages, not operational pages */}
             <button
               onClick={() => onPageChange && onPageChange('reports')}
               className="bg-linear-to-br from-green-500/10 to-green-600/5 hover:from-green-500/20 hover:to-green-600/10 border-2 border-green-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
@@ -494,6 +479,22 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
               <div className="text-3xl mb-2">💸</div>
               <div className="text-sm font-bold text-orange-700 dark:text-orange-400">Expenses</div>
               <div className="text-xs text-muted-foreground mt-1">Track spending</div>
+            </button>
+            <button
+              onClick={() => onPageChange && onPageChange('transactions-history')}
+              className="bg-linear-to-br from-blue-500/10 to-blue-600/5 hover:from-blue-500/20 hover:to-blue-600/10 border-2 border-blue-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+            >
+              <div className="text-3xl mb-2">📋</div>
+              <div className="text-sm font-bold text-blue-700 dark:text-blue-400">Transactions</div>
+              <div className="text-xs text-muted-foreground mt-1">View history</div>
+            </button>
+            <button
+              onClick={() => onPageChange && onPageChange('branch-management')}
+              className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
+            >
+              <div className="text-3xl mb-2">🏢</div>
+              <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Branches</div>
+              <div className="text-xs text-muted-foreground mt-1">Manage locations</div>
             </button>
           </div>
         </div>

@@ -109,10 +109,16 @@ export default function PurchaseOrdersPage({ currentUser, onInventoryChange }) {
   }
 
   const handleCreatePO = (newPO) => {
+    // Block if cashier/manager has no branchId
+    if ((currentUser.role === 'cashier' || currentUser.role === 'manager') && !currentUser.branchId) {
+      alert('You must be assigned to a branch to create purchase orders. Please contact your administrator.')
+      return
+    }
+
     const maxId = Math.max(...purchaseOrders.map(po => po.id), 0)
     const poNumber = `PO-${String(maxId + 1).padStart(5, '0')}`
     const userSnapshot = createUserSnapshot(currentUser)
-    const branchId = currentUser?.branchId || ''
+    const branchId = currentUser?.branchId // No fallback - validated above
     const timestamp = new Date().toISOString()
     
     const poToAdd = {

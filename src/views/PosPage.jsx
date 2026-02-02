@@ -347,10 +347,18 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
     const finalPaymentMethod = method || paymentMethod || 'cash'
     const finalCustomer = customer || selectedCustomer
 
-    // CRITICAL CHECK: If cashier has no branchId, ABORT
-    if (currentUser.role === 'cashier' && !currentUser.branchId) {
-      console.error(`🚨 CRITICAL: Cashier ${currentUser.name} has NO branchId! Cannot complete sale.`)
-      alert(`ERROR: Your account is missing branch assignment. Please logout and login again. Sale was NOT completed.`)
+    // CRITICAL CHECK: If cashier/manager has no branchId, ABORT
+    // Admins should never reach this point as they don't have POS access
+    if ((currentUser.role === 'cashier' || currentUser.role === 'manager') && !currentUser.branchId) {
+      console.error(`🚨 CRITICAL: ${currentUser.role} ${currentUser.name} has NO branchId! Cannot complete sale.`)
+      toast.error('Your account is missing branch assignment. Please contact your administrator. Sale was NOT completed.')
+      return
+    }
+
+    // Additional safety check: Admin should never process sales
+    if (currentUser.role === 'admin') {
+      console.error(`🚨 CRITICAL: Admin ${currentUser.name} attempted to process a sale!`)
+      toast.error('Administrators cannot process sales. This action is restricted to cashiers and managers.')
       return
     }
 
@@ -394,7 +402,7 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         userId: userId, // Track which user made the transaction
         cashier: currentUser?.name || 'Unknown',
         cashierId: userId,
-        branchId: currentUser?.branchId ?? 'NO_BRANCH', // Track which branch this sale belongs to
+        branchId: currentUser?.branchId, // Track which branch this sale belongs to (validated above)
         customerId: finalCustomer?.id || null,
         customerName: finalCustomer?.name || null,
         items: itemsWithVAT.map(item => ({
@@ -425,9 +433,6 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
       }
 
       console.log('💳 Transaction saved with branchId:', transaction.branchId, '(from user:', currentUser?.name, ')')
-            if (!transaction.branchId || transaction.branchId === 'NO_BRANCH') {
-              console.warn('❗ Transaction branchId missing or invalid! User:', currentUser)
-            }
 
       const transactions = sharedData.transactions || []
       transactions.push(transaction)

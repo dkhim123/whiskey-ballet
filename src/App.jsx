@@ -19,6 +19,7 @@ import AdminSettingsPage from "./views/AdminSettingsPage"
 import BranchManagementPage from "./views/BranchManagementPage"
 import TransactionsHistoryPage from "./views/TransactionsHistoryPage"
 import ProfilePage from "./views/ProfilePage"
+import BranchStaffPage from "./views/BranchStaffPage"
 import Sidebar from "./components/Sidebar"
 import ScrollArea from "./components/ScrollArea"
 import PWAInstallPrompt from "./components/PWAInstallPrompt"
@@ -31,6 +32,7 @@ import { saveSession, loadSession, updateSessionPage, clearSession } from "./uti
 import { clearLocalDataIfSafe } from "./utils/clearLocalData"
 import { initializeDefaultUsers, registerUser, getAdminIdForStorage } from "./utils/auth"
 import { calculateVAT, calculateProfit, calculateMargin } from "./utils/pricing"
+import { getAccessiblePages } from "./utils/permissions"
 // Initialize Firebase (cloud database for real-time sync and backup)
 import { db, auth, isFirebaseConfigured } from "./config/firebase"
 // Initialize branch service for multi-branch management
@@ -57,8 +59,22 @@ export default function App() {
             userName: session.user?.name 
           })
           setUserRole(session.userRole)
-          setCurrentPage(session.currentPage) // Restore the actual page user was on
           setCurrentUser(session.user)
+          
+          // Validate page access based on role permissions
+          const accessiblePages = getAccessiblePages(session.user)
+          if (!accessiblePages.includes(session.currentPage)) {
+            console.warn(`⚠️ User ${session.user?.name} (${session.userRole}) attempted to access unauthorized page: ${session.currentPage}`)
+            // Redirect to appropriate default page
+            const defaultPage = session.userRole === 'admin' ? 'admin-dashboard' 
+              : session.userRole === 'manager' ? 'manager-dashboard'
+              : 'cashier-dashboard'
+            setCurrentPage(defaultPage)
+            updateSessionPage(defaultPage)
+          } else {
+            setCurrentPage(session.currentPage) // Restore the actual page user was on
+          }
+          
           // Get admin ID for storage (for cashiers/managers, uses their creator's ID)
           const adminId = getAdminIdForStorage(session.user)
           // Load admin-specific inventory (isolated per admin)
@@ -286,6 +302,7 @@ export default function App() {
           {currentPage === "reports" && <ReportsPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "transactions-history" && <TransactionsHistoryPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "expenses" && <ExpensesPage key={currentUser?.id} currentUser={currentUser} />}
+          {currentPage === "branch-staff" && <BranchStaffPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "user-guide" && <UserGuidePage />}
           {currentPage === "data-management" && <DataManagementPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "admin-settings" && <AdminSettingsPage currentUser={currentUser} inventory={inventory} />}
