@@ -258,9 +258,12 @@ export default function PurchaseOrdersPage({ currentUser, onInventoryChange }) {
   }
 
   // Filter by branch first, then by status
-  const branchFilteredPOs = currentUser?.role === 'cashier'
-    ? purchaseOrders.filter(po => po.branchId === currentUser.branchId || !po.branchId)
-    : purchaseOrders // Admin sees all
+  // Strict branch isolation:
+  // - Cashier/Manager must ONLY see their own branch POs.
+  // - POs without branchId are "unassigned" and are NOT shown to non-admins.
+  const branchFilteredPOs = (currentUser?.role === 'cashier' || currentUser?.role === 'manager')
+    ? purchaseOrders.filter(po => po.branchId && po.branchId === currentUser.branchId)
+    : purchaseOrders // Admin sees all (CCTV view)
     
   const filteredPOs = branchFilteredPOs.filter(po => 
     filterStatus === "all" || po.status === filterStatus

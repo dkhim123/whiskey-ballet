@@ -496,17 +496,25 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   }
 
   const handleAddProduct = async (newProduct) => {
+    // Admin MUST pick a branch before adding a product.
+    // Without a branchId, the product becomes "unassigned" and will be hidden from cashiers/managers.
+    if (currentUser?.role === 'admin' && !selectedBranch) {
+      alert('Please select a branch before adding a product. This ensures the product is visible to the correct branch.')
+      return
+    }
+
     // CRITICAL: Use allInventory (all branches) to calculate max ID to prevent duplicate IDs across branches
     const inventoryToCheck = currentUser?.role === 'admin' ? allInventory : allInventory
     const maxId = Math.max(...inventoryToCheck.map((p) => p.id), 0)
+    const branchIdForProduct = currentUser?.role === 'admin' ? selectedBranch : currentUser?.branchId
     const productToAdd = {
       ...newProduct,
       id: maxId + 1,
       barcode: `12345678900${maxId + 1}`,
-      branchId: currentUser?.branchId, // Associate product with current branch
+      branchId: branchIdForProduct, // Associate product with the chosen/current branch
     }
     
-    console.log(`➕ InventoryPage: Adding new product: ${newProduct.name} to branch ${currentUser?.branchId}, ID: ${productToAdd.id}`)
+    console.log(`➕ InventoryPage: Adding new product: ${newProduct.name} to branch ${branchIdForProduct}, ID: ${productToAdd.id}`)
     console.log(`   Max ID from ${inventoryToCheck.length} total products: ${maxId}`)
     const saved = await saveInventory([...inventory, productToAdd])
     

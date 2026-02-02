@@ -132,9 +132,12 @@ export default function SupplierPaymentsPage({ currentUser }) {
   }
 
   // Filter by branch first, then by supplier
-  const branchFilteredPayments = currentUser?.role === 'cashier'
-    ? payments.filter(p => p.branchId === currentUser.branchId || !p.branchId)
-    : payments // Admin sees all
+  // Strict branch isolation:
+  // - Cashier/Manager must ONLY see their own branch payments.
+  // - Payments without branchId are "unassigned" and are NOT shown to non-admins.
+  const branchFilteredPayments = (currentUser?.role === 'cashier' || currentUser?.role === 'manager')
+    ? payments.filter(p => p.branchId && p.branchId === currentUser.branchId)
+    : payments // Admin sees all (CCTV view)
     
   const filteredPayments = branchFilteredPayments
     .filter(p => filterSupplier === "all" || p.supplierId === parseInt(filterSupplier))

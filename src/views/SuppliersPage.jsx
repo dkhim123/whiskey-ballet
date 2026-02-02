@@ -72,9 +72,12 @@ export default function SuppliersPage({ currentUser }) {
   }
 
   // Filter by branch first
-  const branchFilteredSuppliers = currentUser?.role === 'cashier'
-    ? suppliers.filter(s => s.branchId === currentUser.branchId || !s.branchId)
-    : suppliers // Admin sees all
+  // Strict branch isolation:
+  // - Cashier/Manager must ONLY see their own branch.
+  // - Items without branchId are treated as "unassigned" and are NOT shown to non-admins.
+  const branchFilteredSuppliers = (currentUser?.role === 'cashier' || currentUser?.role === 'manager')
+    ? suppliers.filter(s => s.branchId && s.branchId === currentUser.branchId)
+    : suppliers // Admin sees all (CCTV view)
     
   const filteredSuppliers = branchFilteredSuppliers.filter(supplier =>
     !supplier.deletedAt && ( // Filter out soft-deleted suppliers

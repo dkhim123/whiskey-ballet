@@ -86,8 +86,9 @@ export default function ExpensesPage({ currentUser }) {
           
           // Branch filtering
           let matchesBranch = true
-          if (currentUser.role === 'cashier') {
-            matchesBranch = t.branchId === currentUser.branchId || !t.branchId
+          if (currentUser.role === 'cashier' || currentUser.role === 'manager') {
+            // Strict: non-admins only see items explicitly assigned to their branch
+            matchesBranch = !!t.branchId && t.branchId === currentUser.branchId
           } else if (currentUser.role === 'admin' && selectedBranch) {
             matchesBranch = t.branchId === selectedBranch
           }
@@ -106,8 +107,9 @@ export default function ExpensesPage({ currentUser }) {
 
         // Helper function for expense branch filtering
         const expenseMatchesBranch = (exp) => {
-          if (currentUser.role === 'cashier') {
-            return exp.branchId === currentUser.branchId || !exp.branchId
+          if (currentUser.role === 'cashier' || currentUser.role === 'manager') {
+            // Strict: non-admins only see items explicitly assigned to their branch
+            return !!exp.branchId && exp.branchId === currentUser.branchId
           } else if (currentUser.role === 'admin' && selectedBranch) {
             return exp.branchId === selectedBranch
           }
@@ -146,9 +148,9 @@ export default function ExpensesPage({ currentUser }) {
           
           // Branch filtering
           let matchesBranch = true
-          if (currentUser.role === 'cashier') {
+          if (currentUser.role === 'cashier' || currentUser.role === 'manager') {
             // Cashiers only see their branch's expenses
-            matchesBranch = exp.branchId === currentUser.branchId || !exp.branchId
+            matchesBranch = !!exp.branchId && exp.branchId === currentUser.branchId
           } else if (currentUser.role === 'admin' && selectedBranch) {
             // Admin filtering by specific branch
             matchesBranch = exp.branchId === selectedBranch
