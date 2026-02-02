@@ -258,9 +258,9 @@ export default function BranchManagement({ currentUser }) {
             </p>
           </div>
           <div className="bg-white dark:bg-blue-950/30 rounded-lg p-4">
-            <p className="font-semibold text-blue-900 dark:text-blue-200 mb-2">👥 Assign Cashiers</p>
+            <p className="font-semibold text-blue-900 dark:text-blue-200 mb-2">👥 Assign Staff</p>
             <p className="text-blue-700 dark:text-blue-300">
-              Each cashier can be assigned to a specific branch. This helps you track sales per location.
+              Each manager and cashier can be assigned to a specific branch. This helps you track operations per location.
             </p>
           </div>
         </div>
@@ -313,7 +313,7 @@ export default function BranchManagement({ currentUser }) {
 
               <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
                 <Users className="w-4 h-4" />
-                <span>{branchCashiers[branch.id] || 0} cashier{branchCashiers[branch.id] !== 1 ? 's' : ''}</span>
+                <span>{branchCashiers[branch.id] || 0} staff member{branchCashiers[branch.id] !== 1 ? 's' : ''}</span>
               </div>
 
               <div className="flex gap-2">
@@ -483,7 +483,7 @@ export default function BranchManagement({ currentUser }) {
 
             <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mb-6">
               <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                ⚠️ <strong>Warning:</strong> Cashiers assigned to this branch will need to be reassigned.
+                ⚠️ <strong>Warning:</strong> Staff (managers and cashiers) assigned to this branch will need to be reassigned.
               </p>
             </div>
 
@@ -534,7 +534,7 @@ export default function BranchManagement({ currentUser }) {
                 </p>
                 <ul className="text-sm text-orange-700 dark:text-orange-300 list-disc list-inside space-y-1">
                   <li>Delete ALL existing branches</li>
-                  <li>Clear all cashier branch assignments</li>
+                  <li>Clear all staff (manager and cashier) branch assignments</li>
                   <li>Reset branch storage systems</li>
                 </ul>
               </div>

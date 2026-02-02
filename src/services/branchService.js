@@ -419,16 +419,15 @@ export async function getBranchCashiers(branchId) {
         const usersCol = collection(db, 'organizations', adminId, 'users')
         const q = query(
           usersCol,
-          where('role', '==', 'cashier'),
           where('branchId', '==', branchId),
           where('isActive', '==', true)
         )
         const snap = await getDocs(q)
-        const cashiers = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
-        console.log('✅ Found', cashiers.length, 'cashiers for branch (Firebase)', branchId)
-        return cashiers
+        const users = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+        console.log('✅ Found', users.length, 'users for branch (Firebase)', branchId)
+        return users
       } catch (firebaseError) {
-        console.warn('⚠️ Firebase cashier lookup failed, falling back to local:', firebaseError)
+        console.warn('⚠️ Firebase user lookup failed, falling back to local:', firebaseError)
       }
     }
     
@@ -444,18 +443,18 @@ export async function getBranchCashiers(branchId) {
       branchIdType: typeof u.branchId
     })));
     
-    const branchCashiers = allUsers.filter(user => {
-      const matches = user.branchId === branchId && user.role === 'cashier';
-      if (user.role === 'cashier') {
-        console.log(`Cashier ${user.name}: branchId="${user.branchId}" vs searching="${branchId}" - Match: ${matches}`);
+    const branchUsers = allUsers.filter(user => {
+      const matches = user.branchId === branchId && (user.role === 'cashier' || user.role === 'manager');
+      if (user.role === 'cashier' || user.role === 'manager') {
+        console.log(`${user.role} ${user.name}: branchId="${user.branchId}" vs searching="${branchId}" - Match: ${matches}`);
       }
       return matches;
     });
     
-    console.log('✅ Found', branchCashiers.length, 'cashiers for branch', branchId);
-    return branchCashiers;
+    console.log('✅ Found', branchUsers.length, 'users (cashiers + managers) for branch', branchId);
+    return branchUsers;
   } catch (error) {
-    console.error('Error getting branch cashiers:', error);
+    console.error('Error getting branch users:', error);
     return [];
   }
 }
