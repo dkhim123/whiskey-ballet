@@ -1,4 +1,8 @@
 import withPWAInit from '@ducanh2912/next-pwa'
+import { dirname } from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const withPWA = withPWAInit({
   dest: 'public',
@@ -107,7 +111,11 @@ const nextConfig = {
     unoptimized: true,
   },
   reactStrictMode: true,
-  turbopack: {},
+  // Ensure Turbopack uses this repo as the root.
+  // This fixes warnings about picking /home/* as root (and can break .env.local loading).
+  turbopack: {
+    root: __dirname,
+  },
   webpack: (config) => {
     // Allow the PWA plugin to work with Next.js
     return config

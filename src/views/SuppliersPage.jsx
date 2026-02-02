@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import TopBar from "../components/TopBar"
 import { getAdminIdForStorage } from "../utils/auth"
 import { subscribeToSuppliers } from "../services/realtimeListeners"
+import { readSharedData, writeSharedData } from "../utils/storage"
 
 export default function SuppliersPage({ currentUser }) {
   const [suppliers, setSuppliers] = useState([])

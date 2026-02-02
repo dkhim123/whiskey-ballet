@@ -123,18 +123,59 @@ export default function ProfilePage({ currentUser, userRole, onUserUpdate }) {
   const refreshTokenAndCheckOrgClaim = async (expectedAdminId) => {
     if (!auth?.currentUser) return { ok: false, reason: "Not signed in." }
     try {
-      // Force refresh so newly-set custom claims are picked up.
-      await auth.currentUser.getIdToken(true)
-      const res = await auth.currentUser.getIdTokenResult()
-      const tokenAdminId = res?.claims?.adminId || null
-      if (tokenAdminId !== expectedAdminId) {
-        return {
-          ok: false,
-          reason:
-            "Your login token does not yet have organization permissions. Please logout and login again (or wait 1 minute) then retry.",
-        }
+      const expected = expectedAdminId ? String(expectedAdminId) : null
+      if (!expected) {
+        return { ok: false, reason: "Missing organization ID. Please logout and login again." }
       }
-      return { ok: true }
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+      // Best-effort "poke" to trigger the Cloud Function that syncs claims.
+      // This only updates allowed fields (updatedAt/lastLoginAt) and is safe under our Firestore rules.
+      try {
+        const uidForDoc = auth.currentUser.uid
+        await setDoc(
+          doc(db, "userProfiles", uidForDoc),
+          { updatedAt: serverTimestamp(), lastLoginAt: serverTimestamp() },
+          { merge: true }
+        )
+      } catch {
+        // Ignore: even if this fails, we can still try token refresh.
+      }
+
+      // Claims can take a short time to propagate after the profile write.
+      // Instead of forcing the user to logout/login, we retry for up to 60 seconds.
+      const maxWaitMs = 60_000
+      const intervalMs = 5_000
+      const startedAt = Date.now()
+
+      while (Date.now() - startedAt < maxWaitMs) {
+        // Force refresh so newly-set custom claims are picked up.
+        await auth.currentUser.getIdToken(true)
+        const res = await auth.currentUser.getIdTokenResult()
+        const tokenAdminId = res?.claims?.adminId ? String(res.claims.adminId) : null
+
+        if (tokenAdminId === expected) return { ok: true }
+
+        const elapsed = Date.now() - startedAt
+        const remaining = maxWaitMs - elapsed
+        if (remaining <= 0) break
+
+        console.log(
+          `⏳ Waiting for organization permissions... (missing adminId claim, retrying in ${Math.min(
+            intervalMs,
+            remaining
+          )}ms)`
+        )
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(Math.min(intervalMs, remaining))
+      }
+
+      return {
+        ok: false,
+        reason:
+          "Your login token still does not have organization permissions. This usually means the Cloud Function that sets custom claims is not deployed or not running. Please deploy functions, then logout/login once and retry.",
+      }
     } catch (e) {
       return { ok: false, reason: "Could not refresh login token. Please logout and login again." }
     }

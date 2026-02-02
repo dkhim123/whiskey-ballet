@@ -49,6 +49,13 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
   const [isOpen, setIsOpen] = useState(true)
   const [isMobile, setIsMobile] = useState(false)
   const [storageMode, setStorageMode] = useState("web")
+  const avatarUrl = currentUser?.photoURL || currentUser?.avatarUrl || null
+  const [avatarOk, setAvatarOk] = useState(true)
+
+  useEffect(() => {
+    // If user changes their avatar, re-allow image loading.
+    setAvatarOk(true)
+  }, [avatarUrl])
 
   useEffect(() => {
     // Add global style for hiding scrollbar in sidebar navigation
@@ -267,8 +274,21 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
         <div className="sticky bottom-0 z-10 p-4 space-y-2 border-t-2 border-[#D4AF37]/20 bg-linear-to-t from-[#2C1810] via-[#1a0f0a] to-[#2C1810]">
           {isOpen ? (
             <div className="px-3 py-3 bg-linear-to-br from-[#6B0F1A]/20 to-[#6B0F1A]/10 rounded-lg border-2 border-[#D4AF37]/30 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-linear-to-br from-[#D4AF37] to-[#B8941F] flex items-center justify-center shrink-0 text-[#2C1810] font-bold text-lg shadow-lg">
-                {userRole === 'admin' ? 'A' : userRole === 'manager' ? 'M' : 'C'}
+              <div className="w-10 h-10 rounded-full overflow-hidden bg-linear-to-br from-[#D4AF37] to-[#B8941F] flex items-center justify-center shrink-0 text-[#2C1810] font-bold text-lg shadow-lg">
+                {avatarUrl && avatarOk ? (
+                  <img
+                    src={avatarUrl}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                    onError={() => setAvatarOk(false)}
+                  />
+                ) : (
+                  <span>
+                    {(getFirstName(currentUser?.name || "")?.[0] ||
+                      (userRole === "admin" ? "A" : userRole === "manager" ? "M" : "C")
+                    ).toUpperCase()}
+                  </span>
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-[#D4AF37] truncate">
@@ -282,8 +302,21 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
             </div>
           ) : (
             <div className="flex flex-col items-center gap-2">
-              <div className="w-10 h-10 rounded-full bg-linear-to-br from-[#D4AF37] to-[#B8941F] flex items-center justify-center text-[#2C1810] font-bold text-lg shadow-lg">
-                {userRole === 'admin' ? 'A' : userRole === 'manager' ? 'M' : 'C'}
+              <div className="w-10 h-10 rounded-full overflow-hidden bg-linear-to-br from-[#D4AF37] to-[#B8941F] flex items-center justify-center text-[#2C1810] font-bold text-lg shadow-lg">
+                {avatarUrl && avatarOk ? (
+                  <img
+                    src={avatarUrl}
+                    alt="Profile"
+                    className="w-full h-full object-cover"
+                    onError={() => setAvatarOk(false)}
+                  />
+                ) : (
+                  <span>
+                    {(getFirstName(currentUser?.name || "")?.[0] ||
+                      (userRole === "admin" ? "A" : userRole === "manager" ? "M" : "C")
+                    ).toUpperCase()}
+                  </span>
+                )}
               </div>
               <ThemeToggle />
             </div>

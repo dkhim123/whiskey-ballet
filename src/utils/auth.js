@@ -524,12 +524,19 @@ export const registerUser = async (name, email, password, role, createdBy = null
     return {
       success: true,
       user: {
-        id: newUserId,
+        // IMPORTANT:
+        // Use Firebase UID as the canonical id when the account exists in Firebase Auth.
+        // Keep local numeric id separately for legacy/offline lookups.
+        id: firebaseUid || newUserId,
+        localId: newUserId,
+        firebaseUid: firebaseUid,
         email: sanitizedEmail,
         role: sanitizedRole,
         name: sanitizedName,
         createdBy: createdBy,
-        branchId: branchId || null
+        branchId: branchId || null,
+        // Org isolation id (needed for Firestore paths + Storage rules)
+        adminId: sanitizedRole === 'admin' ? (firebaseUid || null) : (createdBy || null)
       },
       firebaseAuth: !!authUser
     }
@@ -566,24 +573,40 @@ export const getUserByEmail = async (email) => {
  * - For managers/cashiers: returns their creator's ID (the admin who created them)
  * - For self-registered users (createdBy: null): returns their own ID
  * @param {object} user - The user object with id, role, and createdBy fields
- * @returns {number} The admin ID to use for data storage
+ * @returns {string|null} The adminId/orgId to use for shared storage (Firestore + IndexedDB isolation)
  */
 export const getAdminIdForStorage = (user) => {
-  if (!user || !user.id) {
+  if (!user) {
     console.warn('getAdminIdForStorage: No valid user provided')
     return null
   }
   
-  // If user is an admin, use their own ID
-  if (user.role === 'admin') {
-    console.log(`🔑 getAdminIdForStorage: Admin "${user.name}" using own ID: ${user.id}`)
-    return user.id
+  const normalizeId = (value) => {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    // Avoid crashing Firestore path helpers if an older local numeric id leaks in
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+    return null
   }
-  
-  // For managers/cashiers, use their creator's ID (if they were created by an admin)
-  // If createdBy is null (self-registered), use their own ID for backwards compatibility
-  const adminId = user.createdBy || user.id
-  console.log(`🔑 getAdminIdForStorage: ${user.role} "${user.name}" (ID: ${user.id}) using adminId: ${adminId}${user.createdBy ? ' (from creator)' : ' (self-registered)'}`)
+
+  // Prefer explicit adminId from the provisioned user profile (Firestore).
+  // This is the org isolation id used in Firestore paths: organizations/{adminId}/...
+  const explicitAdminId = normalizeId(user.adminId)
+  const fallbackUid = normalizeId(user.firebaseUid) || normalizeId(user.uid)
+  const fallbackId = normalizeId(user.id)
+
+  // If user is an admin, their org adminId should be their own Firebase UID.
+  if (user.role === 'admin') {
+    const adminId = explicitAdminId || fallbackUid || fallbackId
+    console.log(`🔑 getAdminIdForStorage: Admin "${user.name}" using adminId: ${adminId}`)
+    return adminId
+  }
+
+  // For managers/cashiers, use their org adminId from profile.
+  // If missing, fall back to createdBy (legacy), then to their own id (legacy).
+  const adminId = explicitAdminId || normalizeId(user.createdBy) || fallbackUid || fallbackId
+  console.log(
+    `🔑 getAdminIdForStorage: ${user.role} "${user.name}" (ID: ${fallbackId || 'N/A'}) using adminId: ${adminId}${user.createdBy ? ' (from creator)' : ' (fallback)' }`
+  )
   return adminId
 }
 

@@ -35,6 +35,7 @@ import { calculateVAT, calculateProfit, calculateMargin } from "./utils/pricing"
 import { getAccessiblePages } from "./utils/permissions"
 // Initialize Firebase (cloud database for real-time sync and backup)
 import { db, auth, isFirebaseConfigured } from "./config/firebase"
+import { doc, onSnapshot } from "firebase/firestore"
 // Initialize branch service for multi-branch management
 import { initializeBranchService } from "./services/branchService"
 
@@ -44,6 +45,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [inventory, setInventory] = useState([])
   const [storageMode, setStorageMode] = useState("web")
+  const profileUnsubRef = useRef(null)
 
   // Load data from storage on mount
   useEffect(() => {
@@ -138,6 +140,77 @@ export default function App() {
     return () => clearInterval(interval)
   }, [currentUser])
 
+  // Real-time profile sync across tabs/browsers (plain English):
+  // - When you change name/photo on one device, we want it to show on the other device immediately.
+  // - We listen to Firestore: userProfiles/{uid}
+  // - When it changes, we merge the new fields into currentUser + session + localStorage.
+  useEffect(() => {
+    // Cleanup any previous listener
+    if (profileUnsubRef.current) {
+      profileUnsubRef.current()
+      profileUnsubRef.current = null
+    }
+
+    if (!currentUser) return
+    if (!isFirebaseConfigured() || !db) return
+
+    const uid =
+      auth?.currentUser?.uid ||
+      currentUser?.firebaseUid ||
+      currentUser?.uid ||
+      (typeof currentUser?.id === "string" ? currentUser.id : null)
+
+    if (!uid) return
+
+    const unsub = onSnapshot(
+      doc(db, "userProfiles", uid),
+      (snap) => {
+        if (!snap.exists()) return
+        const data = snap.data() || {}
+
+        // Only merge safe identity fields for UI display.
+        const patch = {
+          name: typeof data.name === "string" ? data.name : undefined,
+          photoURL: typeof data.photoURL === "string" ? data.photoURL : undefined,
+          avatarUrl: typeof data.avatarUrl === "string" ? data.avatarUrl : undefined,
+          // Keep org scope in sync if it changes (rare, but supports reassignment)
+          adminId: typeof data.adminId === "string" ? data.adminId : undefined,
+          branchId: typeof data.branchId === "string" ? data.branchId : data.branchId === null ? null : undefined,
+          role: typeof data.role === "string" ? data.role : undefined,
+        }
+
+        setCurrentUser((prev) => {
+          if (!prev) return prev
+          const merged = { ...prev, ...patch }
+
+          try {
+            saveSession(userRole, currentPage, merged)
+          } catch (e) {
+            // ignore
+          }
+          try {
+            localStorage.setItem("currentUser", JSON.stringify(merged))
+          } catch (e) {
+            // ignore
+          }
+
+          return merged
+        })
+      },
+      (err) => {
+        console.warn("Profile realtime sync failed:", err)
+      }
+    )
+
+    profileUnsubRef.current = unsub
+    return () => {
+      if (profileUnsubRef.current) {
+        profileUnsubRef.current()
+        profileUnsubRef.current = null
+      }
+    }
+  }, [currentUser?.id, currentUser?.firebaseUid, currentUser?.uid, userRole, currentPage])
+
   // NOTE: Removed auto-save useEffect here - InventoryPage now manages its own saves
   // This prevents race conditions and ensures atomic database operations
 
@@ -231,6 +304,11 @@ export default function App() {
   }
 
   const handleLogout = async () => {
+    // Stop realtime profile listener immediately
+    if (profileUnsubRef.current) {
+      profileUnsubRef.current()
+      profileUnsubRef.current = null
+    }
     setCurrentPage("login")
     setUserRole(null)
     setCurrentUser(null)

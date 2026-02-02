@@ -6,6 +6,12 @@
  */
 export function subscribeToBranches(onUpdate, onError) {
   const adminId = getCurrentAdminId();
+  // Guard: Firestore path segments must be non-empty strings.
+  if (!adminId || typeof adminId !== 'string') {
+    if (onUpdate) onUpdate([])
+    return () => {}
+  }
+
   if (isFirebaseConfigured() && db) {
     const branchesCol = collection(db, 'organizations', adminId, COLLECTION_NAME);
     const unsubscribe = onSnapshot(
@@ -26,8 +32,8 @@ export function subscribeToBranches(onUpdate, onError) {
         const indexedDb = await getDB();
         const tx = indexedDb.transaction(STORES.BRANCHES, 'readonly');
         const store = tx.objectStore(STORES.BRANCHES);
-        const index = store.index('adminId');
-        const request = index.getAll(adminId);
+        const hasAdminIndex = store.indexNames.contains('adminId')
+        const request = hasAdminIndex ? store.index('adminId').getAll(adminId) : store.getAll()
         request.onsuccess = () => {
           const items = request.result || [];
           const filtered = items.filter(b => b.adminId === adminId && b.isActive);
@@ -37,9 +43,11 @@ export function subscribeToBranches(onUpdate, onError) {
           } else {
             onUpdate(filtered);
           }
+          indexedDb.close()
         };
         request.onerror = () => {
           if (onError) onError(request.error);
+          indexedDb.close()
         };
       } catch (error) {
         if (onError) onError(error);
@@ -218,7 +226,7 @@ export async function getAllBranches() {
   const adminId = getCurrentAdminId();
   
   try {
-    if (!adminId) {
+    if (!adminId || typeof adminId !== 'string') {
       console.warn('getAllBranches: missing adminId (no active session/user)')
       return []
     }
