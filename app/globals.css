@@ -4,15 +4,24 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Modern dark blue and teal color scheme */
-  --background: oklch(0.98 0 0);
-  --foreground: oklch(0.15 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0 0);
-  --primary: oklch(0.35 0.15 250);
-  --primary-foreground: oklch(0.98 0 0);
+  --radius-card: 12px;
+  --radius-button: 8px;
+  --spacing-section: 1.5rem;
+  --font-heading: "Playfair Display", Georgia, serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  /* Modern light – soft cream for brand feel */
+  --wb-cream: #F9F7F2;
+  --wb-gold: #D4AF37;
+  --wb-charcoal: #121212;
+  --wb-espresso: #1a1614;
+  --background: #F9F7F2;
+  --foreground: #1a1614;
+  --card: #ffffff;
+  --card-foreground: #1a1614;
+  --popover: #ffffff;
+  --popover-foreground: #1a1614;
+  --primary: #B8941F;
+  --primary-foreground: #F9F7F2;
   --secondary: oklch(0.45 0.12 200);
   --secondary-foreground: oklch(0.98 0 0);
   --muted: oklch(0.93 0 0);
@@ -43,14 +52,14 @@
 }
 
 .dark {
-  --background: oklch(0.12 0 0);
-  --foreground: oklch(0.95 0 0);
-  --card: oklch(0.20 0.01 250);
-  --card-foreground: oklch(0.95 0 0);
-  --popover: oklch(0.20 0.01 250);
-  --popover-foreground: oklch(0.95 0 0);
-  --primary: oklch(0.65 0.2 180);
-  --primary-foreground: oklch(0.15 0 0);
+  --background: #121212;
+  --foreground: #F5E6D3;
+  --card: #1a1614;
+  --card-foreground: #F5E6D3;
+  --popover: #1a1614;
+  --popover-foreground: #F5E6D3;
+  --primary: #D4AF37;
+  --primary-foreground: #121212;
   --secondary: oklch(0.55 0.18 200);
   --secondary-foreground: oklch(0.98 0 0);
   --muted: oklch(0.32 0.01 250);
@@ -82,8 +91,8 @@
 }
 
 @theme inline {
-  --font-sans: "Geist", "Geist Fallback";
-  --font-mono: "Geist Mono", "Geist Mono Fallback";
+  --font-sans: var(--font-body);
+  --font-mono: ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -133,10 +142,25 @@
   
   body {
     @apply bg-background text-foreground;
-    /* Larger base font size for desktop app readability */
+    font-family: var(--font-body);
     font-size: 16px;
   }
   
+  .font-heading {
+    font-family: var(--font-heading);
+  }
+  
+  /* Shimmer for loading states */
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .animate-shimmer {
+    background: linear-gradient(90deg, var(--muted) 25%, var(--border) 50%, var(--muted) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
   /* Hide default scrollbars - we'll use ScrollArea component instead */
   * {
     scrollbar-width: thin;

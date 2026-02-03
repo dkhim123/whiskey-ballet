@@ -6,7 +6,7 @@ export default function TopBar({ title, subtitle, actions }) {
       {/* On small screens we add extra left padding so the fixed hamburger button doesn't overlap the title */}
       <div className="py-5 pr-6 pl-20 sm:pl-24 lg:px-8 flex items-center justify-between gap-6 min-h-[84px]">
         <div className="min-w-0">
-          <h1 className="text-[28px] sm:text-4xl font-semibold tracking-tight truncate text-[#2C1810] dark:text-[#F5F5DC] leading-none">
+          <h1 className="font-heading text-[28px] sm:text-4xl font-semibold tracking-tight truncate text-[#2C1810] dark:text-[#F5F5DC] leading-none">
             {title}
           </h1>
           {subtitle && (

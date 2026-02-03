@@ -22,9 +22,10 @@ import {
 } from "../services/realtimeListeners"
 import { toast } from "sonner"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
-import { getTodayAtMidnight, getTodayISO, formatTimeAgo } from "../utils/dateUtils"
+import { getTodayAtMidnight, getTodayISO, formatTimeAgo, getTimestampMs } from "../utils/dateUtils"
 import { checkIfMigrationNeeded, migrateDataToBranchIsolation } from "../utils/dataMigration"
 import { getAllBranches } from "../services/branchService"
+import { readSharedData } from "../utils/storage"
 
 export default function AdminDashboard({ currentUser, onPageChange }) {
   const isAdminView = currentUser?.role === 'admin'
@@ -126,13 +127,22 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     return () => { cancelled = true }
   }, [isManagerView, selectedBranch, currentUser?.branchId])
 
-  // Subscribe to all data sources
+  // Subscribe to all data sources + initial load from storage (ensures data shows even before first snapshot)
   useEffect(() => {
     if (!currentUser) return
 
     const adminId = getAdminIdForStorage(currentUser)
+    if (!adminId) return
 
     const branchId = isManagerView ? (currentUser?.branchId || '') : null
+
+    // Seed state immediately from storage so dashboard shows data while subscription connects
+    readSharedData(adminId).then((data) => {
+      if (!data) return
+      setInventoryData(prev => (prev.length ? prev : (data.inventory || [])))
+      setTransactionsData(prev => (prev.length ? prev : (data.transactions || [])))
+      setExpensesData(prev => (prev.length ? prev : (data.expenses || [])))
+    }).catch(() => {})
 
     const unsubscribers = isManagerView
       ? [
@@ -155,13 +165,17 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     }
   }, [currentUser, isManagerView])
 
+  // Normalize branch ID for comparison (handles case/whitespace mismatches)
+  const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+
   // Filter cashiers for selected branch
   const cashiers = useMemo(() => {
     if (!selectedBranch || !usersData.length) return []
-    return usersData.filter(user => 
-      user.role === 'cashier' && 
-      user.branchId === selectedBranch &&
-      user.isActive
+    const selNorm = normalizeBranchId(selectedBranch)
+    return usersData.filter(user =>
+      user.role === 'cashier' &&
+      normalizeBranchId(user.branchId) === selNorm &&
+      user.isActive !== false
     )
   }, [selectedBranch, usersData])
 
@@ -179,42 +193,57 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
       startDate.setHours(0, 0, 0, 0)
     }
 
-    // Filter transactions by date and selected filters
+    // Filter transactions by date and selected filters (use getTimestampMs for Firestore Timestamp or ISO)
+    const startMs = startDate.getTime()
     let rangeTransactions = (transactionsData || []).filter(t => {
-      const transDate = new Date(t.timestamp)
-      return !isNaN(transDate.getTime()) && transDate >= startDate
+      const transMs = getTimestampMs(t.timestamp)
+      return !Number.isNaN(transMs) && transMs >= startMs
     })
 
-    // Apply branch filter
+    // Apply branch filter (normalized comparison; when "All branches" selected, include all including those without branchId)
     if (selectedBranch) {
-      rangeTransactions = rangeTransactions.filter(t => t.branchId === selectedBranch)
+      const selNorm = normalizeBranchId(selectedBranch)
+      rangeTransactions = rangeTransactions.filter(t => {
+        const tBranch = normalizeBranchId(t.branchId)
+        return tBranch && tBranch === selNorm
+      })
     }
 
-    // Apply cashier filter
+    // Apply cashier filter (match userId or cashierId)
     if (selectedCashier) {
-      rangeTransactions = rangeTransactions.filter(t => t.userId === selectedCashier)
+      rangeTransactions = rangeTransactions.filter(t =>
+        t.userId === selectedCashier || t.cashierId === selectedCashier
+      )
     }
 
-    // Calculate financial metrics
+    // Completed sales: cash/mpesa with paymentStatus completed or undefined; exclude credit pending
+    const isCompletedSale = (t) => {
+      const status = t.paymentStatus
+      if (status === 'pending' && t.paymentMethod === 'credit') return false
+      return status === 'completed' || !status
+    }
+    const getAmount = (t) => (t.total != null ? t.total : t.amount) ?? 0
+
     const cashCollected = rangeTransactions
-      .filter(t => t.paymentMethod === 'cash' && (t.paymentStatus === 'completed' || !t.paymentStatus))
-      .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
-      
+      .filter(t => t.paymentMethod === 'cash' && isCompletedSale(t))
+      .reduce((sum, t) => sum + getAmount(t), 0)
+
     const mpesaCollected = rangeTransactions
-      .filter(t => t.paymentMethod === 'mpesa' && (t.paymentStatus === 'completed' || !t.paymentStatus))
-      .reduce((sum, t) => sum + ((t.total || t.amount) ?? 0), 0)
+      .filter(t => t.paymentMethod === 'mpesa' && isCompletedSale(t))
+      .reduce((sum, t) => sum + getAmount(t), 0)
       
     const expectedTotal = cashCollected + mpesaCollected
 
-    // Calculate expenses in range
-    let rangeExpenses = expensesData.filter(e => {
-      const expenseDate = new Date(e.date)
-      return !isNaN(expenseDate.getTime()) && expenseDate >= startDate
+    // Calculate expenses in range (use getTimestampMs for Firestore Timestamp or ISO)
+    let rangeExpenses = (expensesData || []).filter(e => {
+      const dateMs = getTimestampMs(e.date)
+      return !Number.isNaN(dateMs) && dateMs >= startMs
     })
 
-    // Apply branch filter to expenses
+    // Apply branch filter to expenses (normalized)
     if (selectedBranch) {
-      rangeExpenses = rangeExpenses.filter(e => e.branchId === selectedBranch)
+      const selNorm = normalizeBranchId(selectedBranch)
+      rangeExpenses = rangeExpenses.filter(e => normalizeBranchId(e.branchId) === selNorm)
     }
 
     const totalExpenses = rangeExpenses.reduce((sum, e) => sum + (e.amount || 0), 0)
@@ -224,10 +253,11 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
     const spendingLimitPercentage = settingsData?.spendingLimitPercentage || 50
     const isOverSpendingLimit = totalExpenses > (expectedTotal * spendingLimitPercentage / 100)
 
-    // Filter inventory by branch
+    // Filter inventory by branch (normalized)
     let filteredInventory = inventoryData
     if (selectedBranch) {
-      filteredInventory = inventoryData.filter(item => item.branchId === selectedBranch)
+      const selNorm = normalizeBranchId(selectedBranch)
+      filteredInventory = inventoryData.filter(item => normalizeBranchId(item.branchId) === selNorm)
     }
 
     // Calculate inventory alerts
@@ -300,11 +330,11 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
         }
       />
 
-      {/* Branch and Cashier Filters - Admin Only */}
+      {/* Branch, Cashier & Date Filters - Admin Only */}
       {isAdminView && (
         <div className="px-3 sm:px-6 py-4 bg-muted/30 border-b border-border">
-          <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
-            <div className="flex-1">
+          <div className="flex flex-col lg:flex-row gap-4 items-stretch lg:items-end">
+            <div className="flex-1 min-w-0">
               <BranchSelector
                 currentUser={currentUser}
                 selectedBranch={selectedBranch}
@@ -318,14 +348,14 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
               />
             </div>
             {selectedBranch && cashiers.length > 0 && (
-              <div className="flex-1">
-                <label className="block text-sm font-medium text-foreground mb-2">
+              <div className="flex-1 min-w-0">
+                <label className="block text-sm font-semibold text-foreground mb-2">
                   Filter by Cashier
                 </label>
                 <select
                   value={selectedCashier}
                   onChange={(e) => setSelectedCashier(e.target.value)}
-                  className="w-full px-4 py-2 bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-foreground"
+                  className="w-full px-4 py-2.5 bg-background border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground font-medium transition-all"
                 >
                   <option value="">All Cashiers ({cashiers.length})</option>
                   {cashiers.map(cashier => (
@@ -336,24 +366,41 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
                 </select>
               </div>
             )}
-            {(selectedBranch || selectedCashier) && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 border border-primary/20 rounded-lg">
-                <span className="text-xs font-medium text-primary">
-                  {selectedBranch && selectedCashier ? 'Branch & Cashier Filter Active' :
-                   selectedBranch ? 'Branch Filter Active' :
-                   'Cashier Filter Active'}
-                </span>
+            <div className="flex items-end gap-2 flex-wrap shrink-0">
+              <div className="flex flex-col gap-2">
+                <span className="text-sm font-semibold text-foreground">Date Range</span>
+                <div className="flex items-center gap-1.5">
+                  {[
+                    { id: 'today', label: 'Today' },
+                    { id: 'week', label: '7 Days' },
+                    { id: 'month', label: '30 Days' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setDateRange(opt.id)}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg border-2 transition-all ${
+                        dateRange === opt.id
+                          ? 'bg-primary/15 text-primary border-primary/40 shadow-sm'
+                          : 'bg-background/80 text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {(selectedBranch || selectedCashier) && (
                 <button
                   onClick={() => {
                     setSelectedBranch('')
                     setSelectedCashier('')
                   }}
-                  className="text-xs text-primary hover:text-primary/80 underline"
+                  className="px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10 rounded-lg border-2 border-primary/30 transition-colors self-end"
                 >
-                  Clear All
+                  Clear Filters
                 </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       )}

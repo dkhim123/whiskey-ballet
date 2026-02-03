@@ -73,6 +73,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       // Store all inventory for admin
       setAllInventory(inventoryData)
       
+      // Normalize branch IDs for comparison
+      const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+      
       // Filter by branch for cashiers, or by selected branch for admin
       let filteredInventory = inventoryData
       if (currentUser.role === 'cashier') {
@@ -82,10 +85,11 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
           console.warn(`⚠️ Cashier ${currentUser.name} has NO branchId assigned! Cannot filter inventory.`)
           filteredInventory = []
         } else {
+          const normalizedCashierBranch = normalizeBranchId(cashierBranch)
           filteredInventory = inventoryData.filter(item => {
-            // STRICT: Only show items that explicitly match the cashier's branch
-            // Items without branchId are considered unassigned and not shown
-            const matches = item.branchId === cashierBranch
+            // STRICT: Only show items that explicitly match the cashier's branch (normalized)
+            const itemBranchNorm = normalizeBranchId(item.branchId)
+            const matches = itemBranchNorm && itemBranchNorm === normalizedCashierBranch
             if (!item.branchId) {
               console.log(`⚠️ Item "${item.name}" has NO branchId - excluding from cashier view`)
             }
@@ -95,8 +99,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
           console.log(`   Total inventory: ${inventoryData.length}, Unassigned: ${inventoryData.filter(i => !i.branchId).length}`)
         }
       } else if (currentUser.role === 'admin' && selectedBranch) {
-        // Admin viewing specific branch
-        filteredInventory = inventoryData.filter(item => item.branchId === selectedBranch)
+        // Admin viewing specific branch (normalized comparison)
+        const normalizedSelectedBranch = normalizeBranchId(selectedBranch)
+        filteredInventory = inventoryData.filter(item => normalizeBranchId(item.branchId) === normalizedSelectedBranch)
         console.log(`👨‍💼 Admin viewing ${filteredInventory.length} products from branch ${selectedBranch}`)
       } else if (currentUser.role === 'admin') {
         // Admin viewing all branches
@@ -165,9 +170,12 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       if (allInventoryItems.length > 5) console.log(`   ... and ${allInventoryItems.length - 5} more`)
       
       // Filter out items from the editing branch (we'll replace them)
-      // If admin with no selectedBranch, keep all items from all branches (admin view)
+      // Use normalized comparison to handle case/whitespace differences
+      const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+      const normalizedEditingBranch = normalizeBranchId(editingBranch)
+      
       const otherBranchItems = editingBranch 
-        ? allInventoryItems.filter(item => item.branchId !== editingBranch)
+        ? allInventoryItems.filter(item => normalizeBranchId(item.branchId) !== normalizedEditingBranch)
         : (currentUser.role === 'admin' ? [] : allInventoryItems) // Admin editing all, cashier shouldn't reach here
       
       console.log(`🔀 After filtering, otherBranchItems has ${otherBranchItems.length} items (excluded branch: ${editingBranch}):`)
@@ -242,20 +250,24 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   useEffect(() => {
     if (!currentUser) return;
     const adminId = getAdminIdForStorage(currentUser);
+    const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+    
     const unsub = subscribeToInventory(adminId, (data) => {
       // Store all inventory for admin
       setAllInventory(data);
-      // Filter by branch for cashiers, or by selected branch for admin
+      // Filter by branch for cashiers, or by selected branch for admin (normalized comparison)
       let filteredInventory = data;
       if (currentUser.role === 'cashier') {
         const cashierBranch = currentUser.branchId;
         if (!cashierBranch) {
           filteredInventory = [];
         } else {
-          filteredInventory = data.filter(item => item.branchId === cashierBranch);
+          const normalizedCashierBranch = normalizeBranchId(cashierBranch);
+          filteredInventory = data.filter(item => normalizeBranchId(item.branchId) === normalizedCashierBranch);
         }
       } else if (currentUser.role === 'admin' && selectedBranch) {
-        filteredInventory = data.filter(item => item.branchId === selectedBranch);
+        const normalizedSelectedBranch = normalizeBranchId(selectedBranch);
+        filteredInventory = data.filter(item => normalizeBranchId(item.branchId) === normalizedSelectedBranch);
       }
       setInventory(filteredInventory);
       if (onInventoryChange) {

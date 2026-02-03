@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import dynamic from "next/dynamic"
 import TopBar from "../components/TopBar"
 import ReportsFilters from "../components/ReportsFilters"
+import SparklineKpiCard from "../components/SparklineKpiCard"
 import { getAdminIdForStorage } from "../utils/auth"
 import { getTimestampMs } from "../utils/dateUtils"
 import { subscribeToTransactions, subscribeToInventory } from "../services/realtimeListeners"
@@ -13,7 +14,39 @@ import { convertToCSV, downloadCSV } from "../utils/csvExport"
 const ReportsChart = dynamic(() => import("../components/ReportsChart"), { ssr: false })
 import BranchSelector from "../components/BranchSelector"
 
+// Build 24h hourly buckets for sparklines (last 24 hours)
+function build24hSparkline(filteredTransactions) {
+  const now = Date.now()
+  const oneHourMs = 60 * 60 * 1000
+  const buckets = Array.from({ length: 24 }, (_, i) => {
+    const start = now - (24 - i) * oneHourMs
+    const end = start + oneHourMs
+    let total = 0
+    let count = 0
+    let cash = 0
+    let mpesa = 0
+    filteredTransactions.forEach((t) => {
+      const ms = getTimestampMs(t.timestamp)
+      if (Number.isNaN(ms) || ms < start || ms >= end) return
+      total += t.total ?? 0
+      count += 1
+      if (t.paymentMethod === "cash") cash += t.total ?? 0
+      if (t.paymentMethod === "mpesa") mpesa += t.total ?? 0
+    })
+    return { total, count, cash, mpesa, avg: count > 0 ? total / count : 0 }
+  })
+  return {
+    totalSales: buckets.map((b) => ({ value: b.total })),
+    transactions: buckets.map((b) => ({ value: b.count })),
+    average: buckets.map((b) => ({ value: Math.round(b.avg) })),
+    cashSales: buckets.map((b) => ({ value: b.cash })),
+    mpesaSales: buckets.map((b) => ({ value: b.mpesa })),
+  }
+}
+
 export default function ReportsPage({ currentUser }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [reportData, setReportData] = useState({
     paymentMethodData: [],
     dailySalesData: [],
@@ -146,29 +179,42 @@ export default function ReportsPage({ currentUser }) {
       });
       const dailySalesData = Object.entries(dailySalesMap).map(([date, sales]) => ({
         date,
-        sales: Math.round(sales)
-      }));
+        sales: Math.round(sales),
+      }))
+      const last24h = filteredTransactions.filter((t) => {
+        const ms = getTimestampMs(t.timestamp)
+        return !Number.isNaN(ms) && ms >= Date.now() - 24 * 60 * 60 * 1000
+      })
+      const sparkline24h = build24hSparkline(last24h)
       setReportData({
         paymentMethodData,
         dailySalesData,
         topProductsData,
+        sparkline24h,
         salesSummary: {
           totalSales: Math.round(totalSales),
           totalTransactions,
           averageTransaction: Math.round(averageTransaction),
           cashSales: Math.round(cashSales),
-          mpesaSales: Math.round(mpesaSales)
-        }
-      });
-    };
+          mpesaSales: Math.round(mpesaSales),
+        },
+      })
+      setLoading(false)
+      setError(null)
+    }
     unsubTransactions = subscribeToTransactions(adminId, (data) => {
-      transactions = data || [];
-      updateReport();
-    });
+      transactions = data || []
+      updateReport()
+    }, (err) => {
+      setError(err?.message || "Failed to load transactions")
+      setLoading(false)
+    })
     unsubInventory = subscribeToInventory(adminId, (data) => {
-      inventory = data;
-      updateReport();
-    });
+      inventory = data
+      updateReport()
+    }, (err) => {
+      setError(err?.message || "Failed to load inventory")
+    })
     return () => {
       if (unsubTransactions) unsubTransactions();
       if (unsubInventory) unsubInventory();
@@ -230,147 +276,210 @@ export default function ReportsPage({ currentUser }) {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <TopBar 
-        title="Reports & Analytics" 
+    <div className="flex flex-col h-full min-h-0">
+      <TopBar
+        title="Reports & Analytics"
         subtitle="Sales trends and inventory insights"
         actions={[]}
       />
 
-      <div className="p-6 flex-1 overflow-auto">
-        <div className="mb-6 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
-          <div className="flex-1 w-full md:w-auto flex gap-4">
-            <ReportsFilters onDateRangeChange={setDateRange} onPaymentMethodChange={setPaymentMethod} />
-            {currentUser?.role === 'admin' && (
-              <BranchSelector
-                selectedBranch={selectedBranch}
-                onBranchChange={(branchId) => {
-                  setSelectedBranch(branchId)
-                  try {
-                    localStorage.setItem('adminSelectedBranch', branchId || '')
-                  } catch {}
-                }}
-                currentUser={currentUser}
+      <div className="p-6 flex-1 overflow-auto bg-background">
+        {/* Filters + Branch + Export — single row card */}
+        <div className="mb-6 flex flex-col lg:flex-row lg:items-end gap-4">
+          <div className="flex-1 flex flex-col sm:flex-row gap-4 sm:items-end flex-wrap">
+            <div className="min-w-[280px]">
+              <ReportsFilters
+                dateRange={dateRange}
+                paymentMethod={paymentMethod}
+                onDateRangeChange={setDateRange}
+                onPaymentMethodChange={setPaymentMethod}
               />
+            </div>
+            {currentUser?.role === "admin" && (
+              <div className="flex items-center gap-3 flex-wrap">
+                <BranchSelector
+                  selectedBranch={selectedBranch}
+                  onBranchChange={(branchId) => {
+                    setSelectedBranch(branchId);
+                    try {
+                      localStorage.setItem("adminSelectedBranch", branchId || "");
+                    } catch {}
+                  }}
+                  currentUser={currentUser}
+                />
+              </div>
             )}
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-shrink-0">
             <button
               onClick={exportSalesReport}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
+              className="px-4 py-2.5 rounded-xl font-semibold text-white bg-[var(--color-success)] hover:opacity-90 transition-opacity flex items-center gap-2 shadow-md"
               title="Export Sales Summary Report"
             >
-              <span>📊</span>
+              <span aria-hidden>📊</span>
               <span>Export Summary</span>
             </button>
             <button
               onClick={exportTopProducts}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
+              className="px-4 py-2.5 rounded-xl font-semibold text-white bg-[var(--color-burgundy)] hover:opacity-90 transition-opacity flex items-center gap-2 shadow-md"
               title="Export Top Products Report"
             >
-              <span>📦</span>
+              <span aria-hidden>📦</span>
               <span>Export Products</span>
             </button>
           </div>
         </div>
 
-        {/* Sales Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-          <div className="bg-linear-to-br from-blue-500 to-blue-600 text-white rounded-xl p-5 shadow-lg">
-            <div className="text-sm opacity-90 mb-1">Total Sales</div>
-            <div className="text-3xl font-bold">KES {(reportData.salesSummary.totalSales || 0).toLocaleString()}</div>
+        {/* Summary cards — brand-aligned, clear hierarchy */}
+        {error && (
+          <div className="mb-6 rounded-[12px] border border-destructive/50 bg-destructive/10 px-4 py-3 text-destructive text-sm">
+            {error}
           </div>
-          <div className="bg-linear-to-br from-green-500 to-green-600 text-white rounded-xl p-5 shadow-lg">
-            <div className="text-sm opacity-90 mb-1">Transactions</div>
-            <div className="text-3xl font-bold">{reportData.salesSummary.totalTransactions || 0}</div>
-          </div>
-          <div className="bg-linear-to-br from-purple-500 to-purple-600 text-white rounded-xl p-5 shadow-lg">
-            <div className="text-sm opacity-90 mb-1">Avg. Transaction</div>
-            <div className="text-3xl font-bold">KES {(reportData.salesSummary.averageTransaction || 0).toLocaleString()}</div>
-          </div>
-          <div className="bg-linear-to-br from-yellow-500 to-yellow-600 text-white rounded-xl p-5 shadow-lg">
-            <div className="text-sm opacity-90 mb-1">Cash Sales</div>
-            <div className="text-3xl font-bold">KES {(reportData.salesSummary.cashSales || 0).toLocaleString()}</div>
-          </div>
-          <div className="bg-linear-to-br from-indigo-500 to-indigo-600 text-white rounded-xl p-5 shadow-lg">
-            <div className="text-sm opacity-90 mb-1">M-Pesa Sales</div>
-            <div className="text-3xl font-bold">KES {(reportData.salesSummary.mpesaSales || 0).toLocaleString()}</div>
-          </div>
-        </div>
+        )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <ReportsChart title="Sales by Payment Method" type="pie" data={reportData.paymentMethodData} />
-          <ReportsChart title="Daily Sales Trend" type="line" data={reportData.dailySalesData} />
-        </div>
+        {loading ? (
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <SparklineKpiCard key={i} label="" value="—" loading />
+            ))}
+          </section>
+        ) : null}
 
-        {/* Product Sales Ranking - Full Width */}
-        <div className="bg-card border-2 border-border rounded-lg p-6 shadow-sm">
+        {!loading && (
+          <section className="mb-8" aria-label="Sales summary">
+            <h2 className="sr-only">Sales summary</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <SparklineKpiCard
+                label="Total Sales"
+                value={`KES ${(reportData.salesSummary.totalSales || 0).toLocaleString()}`}
+                sparklineData={reportData.sparkline24h?.totalSales || []}
+                accent="gold"
+              />
+              <SparklineKpiCard
+                label="Transactions"
+                value={String(reportData.salesSummary.totalTransactions ?? 0)}
+                sparklineData={reportData.sparkline24h?.transactions || []}
+                accent="burgundy"
+              />
+              <SparklineKpiCard
+                label="Avg. Transaction"
+                value={`KES ${(reportData.salesSummary.averageTransaction || 0).toLocaleString()}`}
+                sparklineData={reportData.sparkline24h?.average || []}
+                accent="gold"
+              />
+              <SparklineKpiCard
+                label="Cash Sales"
+                value={`KES ${(reportData.salesSummary.cashSales || 0).toLocaleString()}`}
+                sparklineData={reportData.sparkline24h?.cashSales || []}
+                accent="green"
+              />
+              <SparklineKpiCard
+                label="M-Pesa Sales"
+                value={`KES ${(reportData.salesSummary.mpesaSales || 0).toLocaleString()}`}
+                sparklineData={reportData.sparkline24h?.mpesaSales || []}
+                accent="green"
+              />
+            </div>
+          </section>
+        )}
+
+        {/* Charts — fixed height so layout doesn’t collapse when empty */}
+        <section className="mb-8" aria-label="Charts">
+          <h2 className="sr-only">Charts</h2>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <ReportsChart title="Sales by Payment Method" type="pie" data={reportData.paymentMethodData} />
+            <ReportsChart title="Daily Sales Trend" type="area" data={reportData.dailySalesData} />
+          </div>
+        </section>
+
+        {/* Product ranking — full width card */}
+        <section className="bg-[var(--color-card-bg)] border border-[var(--color-border)]/40 rounded-xl p-6 shadow-lg" aria-label="Product sales ranking">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
             <div>
-              <h3 className="text-2xl font-bold text-foreground">Product Sales Ranking</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                Products ranked from highest to lowest by {productSortBy === 'revenue' ? 'revenue' : 'quantity sold'}
+              <h3 className="text-xl font-bold text-[var(--color-text-primary)]">Product sales ranking</h3>
+              <p className="text-sm text-[var(--color-text-primary)]/70 mt-1">
+                Ranked by {productSortBy === "revenue" ? "revenue" : "quantity sold"}
               </p>
             </div>
             <div className="flex gap-2">
               <button
-                onClick={() => setProductSortBy('revenue')}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                  productSortBy === 'revenue'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                onClick={() => setProductSortBy("revenue")}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  productSortBy === "revenue"
+                    ? "bg-[var(--color-gold)] text-[var(--color-dark-brown)]"
+                    : "bg-[var(--color-surface)] text-[var(--color-text-primary)] border border-[var(--color-border)]/40 hover:border-[var(--color-gold)]/50"
                 }`}
               >
-                By Revenue
+                By revenue
               </button>
               <button
-                onClick={() => setProductSortBy('quantity')}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                  productSortBy === 'quantity'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                onClick={() => setProductSortBy("quantity")}
+                className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                  productSortBy === "quantity"
+                    ? "bg-[var(--color-gold)] text-[var(--color-dark-brown)]"
+                    : "bg-[var(--color-surface)] text-[var(--color-text-primary)] border border-[var(--color-border)]/40 hover:border-[var(--color-gold)]/50"
                 }`}
               >
-                By Quantity
+                By quantity
               </button>
             </div>
           </div>
-          
+
           {reportData.topProductsData.length > 0 ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {reportData.topProductsData
-                .sort((a, b) => productSortBy === 'revenue' ? b.revenue - a.revenue : b.quantity - a.quantity)
+                .sort((a, b) =>
+                  productSortBy === "revenue" ? b.revenue - a.revenue : b.quantity - a.quantity
+                )
                 .map((product, index) => (
-                  <div key={index} className="flex items-center justify-between p-4 bg-accent/30 rounded-lg hover:bg-accent/50 transition-colors">
-                    <div className="flex items-center gap-4 flex-1">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg ${
-                        index === 0 ? 'bg-yellow-500 text-white' :
-                        index === 1 ? 'bg-gray-400 text-white' :
-                        index === 2 ? 'bg-orange-600 text-white' :
-                        'bg-primary text-primary-foreground'
-                      }`}>
+                  <div
+                    key={`${product.name}-${index}`}
+                    className="flex items-center justify-between p-4 rounded-xl bg-[var(--color-surface)]/60 border border-[var(--color-border)]/20 hover:border-[var(--color-gold)]/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0 ${
+                          index === 0
+                            ? "bg-[var(--color-gold)] text-[var(--color-dark-brown)]"
+                            : index === 1
+                            ? "bg-[var(--color-text-primary)]/30 text-[var(--color-text-primary)]"
+                            : index === 2
+                            ? "bg-[var(--color-burgundy)]/80 text-[var(--color-cream)]"
+                            : "bg-[var(--color-surface)] text-[var(--color-text-primary)]"
+                        }`}
+                      >
                         {index + 1}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="font-bold text-foreground text-lg truncate">{product.name}</div>
-                        <div className="text-sm text-muted-foreground">
+                        <div className="font-semibold text-[var(--color-text-primary)] truncate">
+                          {product.name}
+                        </div>
+                        <div className="text-sm text-[var(--color-text-primary)]/70">
                           {product.quantity} units sold
                         </div>
                       </div>
                     </div>
-                    <div className="text-right ml-4">
-                      <div className="font-bold text-success text-lg">KES {(product.revenue || 0).toLocaleString()}</div>
-                      <div className="text-xs text-muted-foreground">
-                        KES {product.quantity > 0 ? ((product.revenue || 0) / product.quantity).toFixed(2) : '0.00'}/unit
+                    <div className="text-right ml-4 flex-shrink-0">
+                      <div className="font-bold text-[var(--color-gold-light)]">
+                        KES {(product.revenue || 0).toLocaleString()}
+                      </div>
+                      <div className="text-xs text-[var(--color-text-primary)]/60">
+                        KES{" "}
+                        {product.quantity > 0
+                          ? ((product.revenue || 0) / product.quantity).toFixed(2)
+                          : "0.00"}{" "}
+                        /unit
                       </div>
                     </div>
                   </div>
                 ))}
             </div>
           ) : (
-            <p className="text-center text-muted-foreground py-12">No sales data available for the selected period</p>
+            <div className="text-center py-14 rounded-[12px] bg-muted/30 border border-dashed border-border">
+              <p className="text-muted-foreground">No sales data for the selected period.</p>
+            </div>
           )}
-        </div>
+        </section>
       </div>
     </div>
   )

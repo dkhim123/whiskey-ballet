@@ -252,16 +252,13 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
                     onPageChange(item.id)
                     if (isMobile) setIsOpen(false)
                   }}
-                  className={`w-full flex items-center gap-3 pr-4 pl-4 py-3 rounded-lg transition-all touch-manipulation relative leading-6 ${
+                  className={`w-full flex items-center gap-3 pr-4 pl-4 py-3 rounded-full transition-all touch-manipulation relative leading-6 ${
                     currentPage === item.id
-                      ? "bg-linear-to-r from-[#6B0F1A]/30 to-[#6B0F1A]/10 text-[#D4AF37] font-semibold shadow-lg"
+                      ? "bg-[#D4AF37]/20 text-[#D4AF37] font-semibold shadow-[0_0_12px_rgba(212,175,55,0.25)]"
                       : "text-[#F5F5DC]/60 hover:text-[#D4AF37] hover:bg-[#D4AF37]/10 active:bg-[#D4AF37]/20 font-normal"
                   }`}
                   title={!isOpen ? item.label : ""}
                 >
-                  {currentPage === item.id && (
-                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 bg-linear-to-b from-[#D4AF37] to-[#B8941F] rounded-r-full shadow-lg" />
-                  )}
                   <Icon className="w-5 h-5 shrink-0" />
                   {isOpen && <span className="text-sm tracking-wide">{item.label}</span>}
                 </button>
@@ -285,16 +282,13 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
                     onPageChange(item.id)
                     if (isMobile) setIsOpen(false)
                   }}
-                  className={`w-full flex items-center gap-3 pr-4 pl-4 py-3 rounded-lg transition-all touch-manipulation relative leading-6 ${
+                  className={`w-full flex items-center gap-3 pr-4 pl-4 py-3 rounded-full transition-all touch-manipulation relative leading-6 ${
                     currentPage === item.id
-                      ? "bg-linear-to-r from-[#6B0F1A]/30 to-[#6B0F1A]/10 text-[#D4AF37] font-semibold shadow-lg"
+                      ? "bg-[#D4AF37]/20 text-[#D4AF37] font-semibold shadow-[0_0_12px_rgba(212,175,55,0.25)]"
                       : "text-[#F5F5DC]/60 hover:text-[#D4AF37] hover:bg-[#D4AF37]/10 active:bg-[#D4AF37]/20 font-normal"
                   }`}
                   title={!isOpen ? item.label : ""}
                 >
-                  {currentPage === item.id && (
-                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-10 bg-linear-to-b from-[#D4AF37] to-[#B8941F] rounded-r-full shadow-lg" />
-                  )}
                   <Icon className="w-5 h-5 shrink-0" />
                   {isOpen && <span className="text-sm tracking-wide">{item.label}</span>}
                 </button>
@@ -303,10 +297,9 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
           </div>
         </nav>
 
-        {/* Sticky Footer - Profile Card and Logout */}
         <div className="sticky bottom-0 z-10 p-4 space-y-2 border-t-2 border-[#D4AF37]/20 bg-linear-to-t from-[#2C1810] via-[#1a0f0a] to-[#2C1810]">
           {isOpen ? (
-            <div className="px-3 py-3 bg-linear-to-br from-[#6B0F1A]/20 to-[#6B0F1A]/10 rounded-lg border-2 border-[#D4AF37]/30 flex items-center gap-3">
+            <div className="px-3 py-3 rounded-xl border border-[#D4AF37]/25 flex items-center gap-3 bg-white/5 backdrop-blur-md shadow-lg">
               <div className="w-10 h-10 rounded-full overflow-hidden bg-linear-to-br from-[#D4AF37] to-[#B8941F] flex items-center justify-center shrink-0 text-[#2C1810] font-bold text-lg shadow-lg">
                 {avatarUrl && avatarOk ? (
                   <img
@@ -360,7 +353,8 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
           )}
           <button
             onClick={onLogout}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg w-full transition-all hover:bg-red-500/20 text-[#FF6B6B] hover:text-red-400 text-sm tracking-wide font-medium"
+            className="flex items-center gap-3 px-4 py-3 rounded-[8px] w-full transition-all bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 text-sm font-medium border border-red-500/30"
+            style={{ borderRadius: "var(--radius-button, 8px)" }}
             title={!isOpen ? "Logout" : ""}
           >
             <LogoutIcon className="w-5 h-5 shrink-0" />

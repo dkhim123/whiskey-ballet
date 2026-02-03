@@ -56,12 +56,10 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
         continue
       }
 
-      // CRITICAL: Determine the correct branchId for this product
-      // Priority: targetBranchId (passed in) > CSV column > currentUser.branchId (cashier)
-      let productBranchId = targetBranchId || product.branchid || product.branch_id || ''
-      if (!productBranchId && currentUser?.branchId) {
-        productBranchId = currentUser.branchId // Cashier's branch
-      }
+      // CRITICAL: ALWAYS use targetBranchId (selectedBranch) to prevent cross-branch contamination
+      // The branchId column in CSV is IGNORED to ensure data goes to the correct branch
+      // Priority: targetBranchId (passed in from UI) > currentUser.branchId (cashier fallback)
+      const productBranchId = targetBranchId || currentUser?.branchId || ''
 
       products.push({
         name: product.name,
@@ -79,7 +77,7 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
         expiryDate: product.expirydate || product.expiry_date || '',
         batchNumber: product.batchnumber || product.batch_number || '',
         kebsNumber: product.kebsnumber || product.kebs_number || '',
-        branchId: productBranchId
+        branchId: productBranchId // ALWAYS the target branch, never from CSV
       })
     }
 
@@ -123,36 +121,55 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
         ? Math.max(...existingInventory.map(p => p.id || 0)) + 1
         : 1
 
-      const updatedInventory = [...existingInventory]
+      // CRITICAL: Only work with items from the target branch to prevent cross-branch contamination
+      // Normalize branch IDs for comparison (case-insensitive, trimmed)
+      const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+      const normalizedSelectedBranch = normalizeBranchId(selectedBranch)
+      
+      const targetBranchItems = existingInventory.filter(p => normalizeBranchId(p.branchId) === normalizedSelectedBranch)
+      const otherBranchItems = existingInventory.filter(p => normalizeBranchId(p.branchId) !== normalizedSelectedBranch)
+      
+      console.log(`📦 CSV Import: Target branch "${selectedBranch}" has ${targetBranchItems.length} items, other branches have ${otherBranchItems.length} items`)
+      
+      // Log branch distribution for debugging
+      const branchCounts = {}
+      existingInventory.forEach(item => {
+        const branch = item.branchId || 'UNASSIGNED'
+        branchCounts[branch] = (branchCounts[branch] || 0) + 1
+      })
+      console.log(`📊 Current inventory by branch:`, branchCounts)
+
+      const updatedBranchInventory = [...targetBranchItems]
 
       parsedProducts.forEach((product, index) => {
         try {
           let existingIndex = -1
 
+          // Search ONLY within the target branch
           if (product.sku) {
-            existingIndex = updatedInventory.findIndex(p =>
+            existingIndex = updatedBranchInventory.findIndex(p =>
               p.sku && p.sku.toLowerCase() === product.sku.toLowerCase()
             )
           }
 
           if (existingIndex === -1 && product.barcode) {
-            existingIndex = updatedInventory.findIndex(p =>
+            existingIndex = updatedBranchInventory.findIndex(p =>
               p.barcode && p.barcode === product.barcode
             )
           }
 
           if (existingIndex === -1) {
-            existingIndex = updatedInventory.findIndex(p =>
-              p.name.toLowerCase() === product.name.toLowerCase() &&
-              p.branchId === product.branchId
+            existingIndex = updatedBranchInventory.findIndex(p =>
+              p.name.toLowerCase() === product.name.toLowerCase()
             )
           }
 
           if (existingIndex !== -1) {
-            updatedInventory[existingIndex] = {
-              ...updatedInventory[existingIndex],
+            updatedBranchInventory[existingIndex] = {
+              ...updatedBranchInventory[existingIndex],
               ...product,
-              id: updatedInventory[existingIndex].id,
+              id: updatedBranchInventory[existingIndex].id,
+              branchId: selectedBranch, // Ensure branch assignment is preserved
               updatedAt: new Date().toISOString(),
               updatedBy: {
                 id: currentUser?.id || '',
@@ -162,9 +179,10 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
             }
             updated++
           } else {
-            updatedInventory.push({
+            updatedBranchInventory.push({
               ...product,
               id: nextId++,
+              branchId: selectedBranch, // Ensure new items get correct branch
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               createdBy: {
@@ -180,8 +198,13 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
         }
       })
 
-      const cleanedInventory = (updatedInventory || []).filter(p => p && typeof p === 'object')
-      const finalInventory = cleanedInventory.filter(p => p.id !== undefined && p.id !== null)
+      // CRITICAL: Merge updated branch items with other branches' items
+      const finalInventory = [
+        ...otherBranchItems, // Preserve all items from other branches
+        ...updatedBranchInventory.filter(p => p && typeof p === 'object' && p.id !== undefined && p.id !== null)
+      ]
+      
+      console.log(`✅ CSV Import: Final inventory has ${finalInventory.length} items (${updatedBranchInventory.length} from target branch, ${otherBranchItems.length} from other branches)`)
 
       await writeSharedData({
         ...sharedData,
@@ -405,12 +428,17 @@ Beer Tusker,SKU003,11223344,200,150,100,Beer,20,XYZ Distributors,bottle,Lager 50
           <h4 className="text-sm font-semibold mb-2">CSV Format Guidelines:</h4>
           <ul className="text-xs text-muted-foreground space-y-1">
             <li>• <strong>Required columns:</strong> name, price</li>
-            <li>• <strong>Optional columns:</strong> sku, barcode, costPrice, quantity, category, reorderLevel, supplier, unit, description, location, expiryDate, batchNumber, kebsNumber, branchId</li>
+            <li>• <strong>Optional columns:</strong> sku, barcode, costPrice, quantity, category, reorderLevel, supplier, unit, description, location, expiryDate, batchNumber, kebsNumber</li>
             <li>• Products are matched by SKU, barcode, or name for updates</li>
             <li>• If no match found, a new product is created</li>
             <li>• Column names are case-insensitive</li>
             <li>• Use comma (,) as delimiter</li>
           </ul>
+          {selectedBranch && (
+            <div className="mt-3 p-2 bg-primary/10 border border-primary/20 rounded text-xs">
+              <strong className="text-primary">⚠️ Branch Isolation:</strong> All imported products will be assigned to <strong>{selectedBranch}</strong> branch. Any branchId column in your CSV will be ignored.
+            </div>
+          )}
         </div>
       </div>
     </Card>

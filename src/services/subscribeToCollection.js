@@ -40,37 +40,43 @@ export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, o
     );
     return unsubscribe;
   } else {
-    // IndexedDB fallback: strict adminId filtering
-    import('../utils/indexedDBStorage').then(({ getAllItems, STORES }) => {
-      let storeName = collectionPath;
-      // Map known collection paths to store names if needed
-      if (storeName === 'transactions') storeName = STORES.TRANSACTIONS;
-      if (storeName === 'inventory') storeName = STORES.INVENTORY;
-      if (storeName === 'customers') storeName = STORES.CUSTOMERS;
-      if (storeName === 'branches') storeName = STORES.BRANCHES;
-      if (storeName === 'users') storeName = STORES.USERS;
-      if (storeName === 'settings') storeName = STORES.SETTINGS;
-      getAllItems(storeName, adminId).then(items => {
-        // Strict adminId filtering (defense-in-depth)
+    // IndexedDB fallback: poll for updates (no real-time in IndexedDB)
+    const POLL_INTERVAL_MS = 5000; // Refresh every 5 seconds when offline
+    let intervalId = null;
+
+    const fetchFromIndexedDB = () => {
+      import('../utils/indexedDBStorage').then(({ getAllItems, STORES }) => {
+        let storeName = collectionPath;
+        if (storeName === 'transactions') storeName = STORES.TRANSACTIONS;
+        if (storeName === 'inventory') storeName = STORES.INVENTORY;
+        if (storeName === 'customers') storeName = STORES.CUSTOMERS;
+        if (storeName === 'expenses') storeName = STORES.EXPENSES;
+        if (storeName === 'branches') storeName = STORES.BRANCHES;
+        if (storeName === 'users') storeName = STORES.USERS;
+        if (storeName === 'settings') storeName = STORES.SETTINGS;
+        getAllItems(storeName, adminId).then(items => {
           const filtered = (items || []).filter(item => item.adminId === adminId);
-          // If any item does not match adminId, purge all local data
           if ((items || []).some(item => item.adminId !== adminId)) {
             import('../utils/clearLocalData').then(({ default: clearLocalData }) => clearLocalData()).catch(err => {
-              console.error('Error clearing local data:', err);
               if (onError) onError(err);
             });
             onUpdate([]);
           } else {
             onUpdate(filtered);
           }
+        }).catch(error => {
+          if (onError) onError(error);
+        });
       }).catch(error => {
-        console.error('Error getting items from IndexedDB:', error);
         if (onError) onError(error);
       });
-    }).catch(error => {
-      console.error('Error importing indexedDBStorage:', error);
-      if (onError) onError(error);
-    });
-    return () => {};
+    };
+
+    fetchFromIndexedDB(); // Initial fetch
+    intervalId = setInterval(fetchFromIndexedDB, POLL_INTERVAL_MS);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }
 }
