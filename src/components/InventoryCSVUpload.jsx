@@ -278,10 +278,11 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
   }
 
   const downloadTemplate = () => {
-    const template = `name,sku,barcode,price,costPrice,quantity,category,reorderLevel,supplier,unit,description,location,expiryDate,batchNumber,kebsNumber,branchId
-Whiskey Jameson,SKU001,12345678,2500,2000,50,Spirits,10,ABC Suppliers,bottle,Irish Whiskey 750ml,Shelf A1,2027-12-31,BATCH001,KEBS001,ruiru
-Vodka Smirnoff,SKU002,87654321,1800,1400,30,Spirits,10,ABC Suppliers,bottle,Vodka 750ml,Shelf A2,2027-06-30,BATCH002,KEBS002,ruiru
-Beer Tusker,SKU003,11223344,200,150,100,Beer,20,XYZ Distributors,bottle,Lager 500ml,Cooler 1,2026-03-31,BATCH003,KEBS003,ruiru`
+    // Template does NOT include branchId - import target is always the selected branch from UI
+    const template = `name,sku,barcode,price,costPrice,quantity,category,reorderLevel,supplier,unit,description,location,expiryDate,batchNumber,kebsNumber
+Whiskey Jameson,SKU001,12345678,2500,2000,50,Spirits,10,ABC Suppliers,bottle,Irish Whiskey 750ml,Shelf A1,2027-12-31,BATCH001,KEBS001
+Vodka Smirnoff,SKU002,87654321,1800,1400,30,Spirits,10,ABC Suppliers,bottle,Vodka 750ml,Shelf A2,2027-06-30,BATCH002,KEBS002
+Beer Tusker,SKU003,11223344,200,150,100,Beer,20,XYZ Distributors,bottle,Lager 500ml,Cooler 1,2026-03-31,BATCH003,KEBS003`
     
     const blob = new Blob([template], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)

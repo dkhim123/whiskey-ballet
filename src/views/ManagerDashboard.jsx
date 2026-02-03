@@ -95,9 +95,11 @@ export default function ManagerDashboard({ currentUser }) {
         // Load users/cashiers
         const users = data.users || []
         
-        // Filter by branchId if selected
-        const filteredInventory = selectedBranch ? (data.inventory || []).filter(i => i.branchId === selectedBranch) : (data.inventory || [])
-        let filteredTransactions = selectedBranch ? (data.transactions || []).filter(t => t.branchId === selectedBranch) : (data.transactions || [])
+        // Filter by branchId if selected (normalized for case/whitespace)
+        const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+        const normBranch = selectedBranch ? normalizeBranchId(selectedBranch) : ''
+        const filteredInventory = selectedBranch ? (data.inventory || []).filter(i => normalizeBranchId(i.branchId) === normBranch) : (data.inventory || [])
+        let filteredTransactions = selectedBranch ? (data.transactions || []).filter(t => normalizeBranchId(t.branchId) === normBranch) : (data.transactions || [])
         
         // Filter cashiers by selected branch
         const branchCashiers = selectedBranch 

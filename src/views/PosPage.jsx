@@ -87,15 +87,17 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         let filteredTransactions = sharedData.transactions || []
 
         if (branchId) {
-          // STRICT: Only items with matching branchId (exclude undefined)
+          const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+          const normalizedBranch = normalizeBranchId(branchId)
+          // STRICT: Only items with matching branchId (normalized comparison)
           filteredInventory = filteredInventory.filter(i => {
-            const hasMatch = i.branchId === branchId
-            if (!i.branchId && hasMatch) {
+            if (!i.branchId) {
               console.error(`🚨 BUG DETECTED: Product "${i.name}" has undefined branchId but passed filter!`)
+              return false
             }
-            return i.branchId && i.branchId === branchId
+            return normalizeBranchId(i.branchId) === normalizedBranch
           })
-          filteredTransactions = filteredTransactions.filter(t => t.branchId && t.branchId === branchId)
+          filteredTransactions = filteredTransactions.filter(t => t.branchId && normalizeBranchId(t.branchId) === normalizedBranch)
 
           console.log(`🔒 FILTERED for branch "${branchId}": ${filteredInventory.length} products`)
           console.log('Sample products:', filteredInventory.slice(0, 3).map(p => `${p.name} (branch: ${p.branchId})`).join(', '))
@@ -524,9 +526,13 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
       const allInventoryItems = sharedData.inventory || []
       const currentBranch = currentUser.branchId
 
+      // Normalize branch IDs so "Nakuru" vs "nakuru" don't mix branches
+      const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
+      const normalizedCurrentBranch = normalizeBranchId(currentBranch)
+
       // Filter out items from current branch (we'll replace them with updated quantities)
       const otherBranchItems = currentBranch
-        ? allInventoryItems.filter(item => item.branchId !== currentBranch)
+        ? allInventoryItems.filter(item => normalizeBranchId(item.branchId) !== normalizedCurrentBranch)
         : []
 
       // Combine: other branches' items (unchanged) + current branch items (updated quantities)

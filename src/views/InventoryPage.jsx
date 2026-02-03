@@ -932,7 +932,10 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
             <div className="sticky top-0 bg-background border-b border-border p-4 flex items-center justify-between">
               <h2 className="text-xl font-bold">Import Inventory from CSV</h2>
               <button
-                onClick={() => setShowCSVUpload(false)}
+                onClick={() => {
+                  setShowCSVUpload(false)
+                  setCsvImportTargetBranch(null)
+                }}
                 className="p-2 hover:bg-muted rounded-lg transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -941,9 +944,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
             <div className="p-6">
               <InventoryCSVUpload
                 currentUser={currentUser}
-                selectedBranch={selectedBranch}
+                selectedBranch={csvImportTargetBranch ?? selectedBranch}
                 onInventoryUpdate={(updatedInventory) => {
-                  loadInventory() // Reload inventory after CSV upload
+                  loadInventory()
                 }}
               />
             </div>
