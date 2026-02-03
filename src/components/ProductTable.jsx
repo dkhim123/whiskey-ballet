@@ -93,10 +93,10 @@ export default function ProductTable({ products, onAddProduct, cart = [], select
               const expired = isExpired(product.expiryDate)
               const effectivePrice = getEffectivePrice(product)
               const hasDiscount = selectedCustomer?.specialPricing && selectedCustomer?.discountRate > 0
-              
+              const rowKey = `${product.branchId ?? 'u'}_${product.id}_${idx}`
               return (
                 <tr 
-                  key={product.id} 
+                  key={rowKey} 
                   className={`
                     border-b border-border/30
                     ${isOutOfStock || expired ? "opacity-60 cursor-not-allowed" : "hover:bg-slate-50/80 dark:hover:bg-slate-800/50 cursor-pointer"}

@@ -13,7 +13,7 @@ import CreditSaleModal from "../components/CreditSaleModal"
 import Pagination from "../components/Pagination"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
-import { subscribeToCustomers, subscribeToInventory, subscribeToTransactions } from "../services/realtimeListeners"
+import { subscribeToCustomers, subscribeToCustomersByBranch, subscribeToInventory, subscribeToInventoryByBranch, subscribeToTransactions, subscribeToTransactionsByBranch } from "../services/realtimeListeners"
 import { isExpired, isExpiringSoon } from "../utils/dateHelpers"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
 import { calculateCartTotals, calculateItemVAT } from "../utils/pricing"
@@ -147,19 +147,36 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
       return (items || []).filter((x) => !!x.branchId && x.branchId === branchId)
     }
 
-    const unsubInventory = subscribeToInventory(adminId, (data) => {
-      const filtered = filterByBranchStrict(data || [])
-      setInventory(filtered)
-      if (onInventoryChange) onInventoryChange(filtered)
-    })
-    const unsubTransactions = subscribeToTransactions(adminId, (data) => {
-      const filtered = filterByBranchStrict(data || [])
-      setTransactions(filtered)
-    })
-    const unsubCustomers = subscribeToCustomers(adminId, (data) => {
-      const filtered = filterByBranchStrict(data || [])
-      setCustomers(filtered)
-    })
+    const useBranchQuery = !!branchId
+    const unsubInventory = useBranchQuery
+      ? subscribeToInventoryByBranch(adminId, branchId, (data) => {
+          const filtered = filterByBranchStrict(data || [])
+          setInventory(filtered)
+          if (onInventoryChange) onInventoryChange(filtered)
+        })
+      : subscribeToInventory(adminId, (data) => {
+          const filtered = filterByBranchStrict(data || [])
+          setInventory(filtered)
+          if (onInventoryChange) onInventoryChange(filtered)
+        })
+    const unsubTransactions = useBranchQuery
+      ? subscribeToTransactionsByBranch(adminId, branchId, (data) => {
+          const filtered = filterByBranchStrict(data || [])
+          setTransactions(filtered)
+        })
+      : subscribeToTransactions(adminId, (data) => {
+          const filtered = filterByBranchStrict(data || [])
+          setTransactions(filtered)
+        })
+    const unsubCustomers = useBranchQuery
+      ? subscribeToCustomersByBranch(adminId, branchId, (data) => {
+          const filtered = filterByBranchStrict(data || [])
+          setCustomers(filtered)
+        })
+      : subscribeToCustomers(adminId, (data) => {
+          const filtered = filterByBranchStrict(data || [])
+          setCustomers(filtered)
+        })
 
     return () => {
       try {
@@ -493,17 +510,34 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         const DEFAULT_LOAN_DURATION_DAYS = 30
         const defaultDueDate = new Date(Date.now() + DEFAULT_LOAN_DURATION_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
-        updatedCustomers = updatedCustomers.map(c =>
-          c.id === finalCustomer.id
-            ? { 
-                ...c, 
-                balance: (c.balance || 0) + total,
-                loanAmount: (c.loanAmount || 0) + total,
-                loanDate: c.loanDate || currentDate,
-                loanDueDate: c.loanDueDate || defaultDueDate
-              }
-            : c
-        )
+        // Customer may have been created this session; shared read might not include them yet. Ensure we add/update with loan.
+        const existing = sharedData.customers || []
+        const found = existing.some(c => c.id === finalCustomer.id)
+        if (found) {
+          updatedCustomers = existing.map(c =>
+            c.id === finalCustomer.id
+              ? {
+                  ...c,
+                  balance: (c.balance || 0) + total,
+                  loanAmount: (c.loanAmount || 0) + total,
+                  loanDate: c.loanDate || currentDate,
+                  loanDueDate: c.loanDueDate || defaultDueDate
+                }
+              : c
+          )
+        } else {
+          // Just-created customer not in shared read yet: add with loan so loan amount persists
+          updatedCustomers = [
+            ...existing,
+            {
+              ...finalCustomer,
+              balance: (finalCustomer.balance || 0) + total,
+              loanAmount: (finalCustomer.loanAmount || 0) + total,
+              loanDate: currentDate,
+              loanDueDate: defaultDueDate
+            }
+          ]
+        }
 
         // Create expense entry for credit sale (money owed to business)
         const expenseEntry = {
@@ -567,15 +601,6 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         transactions: transactions,
         customers: updatedCustomers
       }, adminId)
-
-      console.log(`✅ PosPage: Transaction saved successfully`)
-
-      // DEBUG: Verify what was saved by reading it back
-      const verifyData = await readSharedData(adminId)
-      console.log(`🔍 VERIFICATION - After save, DB has ${verifyData.inventory?.length || 0} items:`)
-      verifyData.inventory?.forEach((item, idx) => {
-        console.log(`   ${idx + 1}. ${item.name}: branchId="${item.branchId}", id="${item.id}", qty=${item.quantity}`)
-      })
 
       // Save expenses to user-specific storage (only admin can see expenses)
       await writeData({
@@ -660,28 +685,35 @@ export default function PosPage({ inventory: initialInventory = [], onInventoryC
         toast.error('User not authenticated')
         return
       }
+      if ((currentUser.role === 'cashier' || currentUser.role === 'manager') && !currentUser.branchId) {
+        toast.error('You must be assigned to a branch to create customers.')
+        return
+      }
 
-      // Get admin ID for storage
       const adminId = getAdminIdForStorage(currentUser)
+      const sharedData = await readSharedData(adminId, false, { stores: ['customers'] })
+      const existingCustomers = sharedData.customers || []
+      const maxId = Math.max(0, ...existingCustomers.map(c => c.id))
 
-      // Read from admin-specific storage for customers
-      const sharedData = await readSharedData(adminId)
-      const maxId = Math.max(0, ...(sharedData.customers || []).map(c => c.id))
-      
       const customerToAdd = {
         ...newCustomerData,
         id: maxId + 1,
-        balance: 0,
+        balance: newCustomerData.balance ?? 0,
+        branchId: currentUser?.branchId,
+        createdBy: {
+          id: currentUser?.id,
+          name: currentUser?.name || currentUser?.email,
+          role: currentUser?.role,
+        },
         createdDate: new Date().toISOString(),
       }
 
-      const updatedCustomers = [...(sharedData.customers || []), customerToAdd]
-      
-      // Save to admin-specific storage
-      await writeSharedData({
-        ...sharedData,
-        customers: updatedCustomers
-      }, adminId)
+      const updatedCustomers = [...existingCustomers, customerToAdd]
+      await writeSharedData(
+        { ...sharedData, customers: updatedCustomers },
+        adminId,
+        { writeOnlyStores: ['customers'] }
+      )
 
       setCustomers(updatedCustomers)
       

@@ -303,6 +303,23 @@ export default function App() {
     }
   }
 
+  // Central navigation guard: only allow pages the user is permitted to access (prevents privilege escalation via tampered session or devtools)
+  const handlePageChange = (page) => {
+    if (!currentUser || !page) return
+    const allowed = getAccessiblePages(currentUser)
+    if (!allowed.includes(page)) {
+      const defaultPage =
+        currentUser.role === 'admin' ? 'admin-dashboard'
+        : currentUser.role === 'manager' ? 'manager-dashboard'
+        : 'cashier-dashboard'
+      setCurrentPage(defaultPage)
+      updateSessionPage(defaultPage)
+      return
+    }
+    setCurrentPage(page)
+    updateSessionPage(page)
+  }
+
   const handleLogout = async () => {
     // Stop realtime profile listener immediately
     if (profileUnsubRef.current) {
@@ -357,11 +374,7 @@ export default function App() {
         <AccountHealthCheck currentUser={currentUser} onLogout={handleLogout} />
         <Sidebar 
           currentPage={currentPage} 
-          onPageChange={(page) => {
-            setCurrentPage(page)
-            // Update session using utility
-            updateSessionPage(page)
-          }} 
+          onPageChange={handlePageChange} 
           userRole={userRole} 
           currentUser={currentUser}
           onLogout={handleLogout} 
@@ -377,14 +390,7 @@ export default function App() {
           }} />}
           {currentPage === "cashier-dashboard" && <CashierDashboard key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "manager-dashboard" && (
-            <AdminDashboard
-              key={currentUser?.id}
-              currentUser={currentUser}
-              onPageChange={(page) => {
-                setCurrentPage(page)
-                updateSessionPage(page)
-              }}
-            />
+            <AdminDashboard key={currentUser?.id} currentUser={currentUser} onPageChange={handlePageChange} />
           )}
           {currentPage === "reports" && <ReportsPage key={currentUser?.id} currentUser={currentUser} />}
           {currentPage === "transactions-history" && <TransactionsHistoryPage key={currentUser?.id} currentUser={currentUser} />}

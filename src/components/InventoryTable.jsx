@@ -36,8 +36,9 @@ export default function InventoryTable({
       return true
     })
   })()
-  const allOnPageSelected = enableSelection && filteredItems.length > 0 && filteredItems.every(i => selectedIds.includes(i.id))
-  const someSelected = enableSelection && filteredItems.some(i => selectedIds.includes(i.id))
+  const getRowKey = (item) => `${item?.branchId ?? 'u'}_${item?.id ?? ''}`
+  const allOnPageSelected = enableSelection && filteredItems.length > 0 && filteredItems.every(i => selectedIds.includes(getRowKey(i)))
+  const someSelected = enableSelection && filteredItems.some(i => selectedIds.includes(getRowKey(i)))
   const headerCheckRef = useRef(null)
   useEffect(() => {
     const el = headerCheckRef.current
@@ -240,8 +241,8 @@ export default function InventoryTable({
                     <label className="flex items-center cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={selectedIds.includes(item.id)}
-                        onChange={() => onToggleSelect?.(item.id)}
+                        checked={selectedIds.includes(getRowKey(item))}
+                        onChange={() => onToggleSelect?.(getRowKey(item))}
                         className="rounded border-border text-primary focus:ring-primary"
                       />
                     </label>

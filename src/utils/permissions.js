@@ -244,6 +244,7 @@ export const getAccessiblePages = (user) => {
     pages.push(
       'manager-dashboard',
       'inventory',
+      'customers',
       'suppliers',
       'purchase-orders',
       'supplier-payments',

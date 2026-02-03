@@ -7,7 +7,7 @@ import RecentTransactions from "../components/RecentTransactions"
 import AccountabilityModal from "../components/AccountabilityModal"
 import { readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
-import { subscribeToTransactions } from "../services/realtimeListeners"
+import { subscribeToTransactions, subscribeToTransactionsByBranch } from "../services/realtimeListeners"
 import { formatTimeAgo, isWithinLastMs } from "../utils/dateUtils"
 
 export default function CashierDashboard({ currentUser }) {
@@ -87,7 +87,10 @@ export default function CashierDashboard({ currentUser }) {
     }
 
     const branchId = currentUser?.branchId
-    const unsub = subscribeToTransactions(adminId, (allTransactions) => {
+    const subscribe = branchId
+      ? (cb) => subscribeToTransactionsByBranch(adminId, branchId, cb)
+      : (cb) => subscribeToTransactions(adminId, cb)
+    const unsub = subscribe((allTransactions) => {
       const userId = currentUser?.id
       if (!userId) return
       const norm = (v) => (v != null ? String(v).trim() : '')

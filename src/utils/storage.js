@@ -381,17 +381,15 @@ export const normalizeTransaction = (transaction) => {
  * Read shared data (inventory, transactions - now per-admin isolated)
  * @param {number|string} adminId - The admin ID to read data for (null for legacy shared data)
  * @param {boolean} includeDeleted - Whether to include soft-deleted items (default: false)
- * This ensures data isolation: each admin has their own inventory, transactions, etc.
+ * @param {object} [options] - Optional: { stores: string[] } to read only these stores (e.g. ['inventory']) for faster inventory-only saves
  */
 // Cache version check to avoid repeated localStorage access
 let cachedNormalizationVersion = null
 let hasCheckedVersion = false
 
-export const readSharedData = async (adminId = null, includeDeleted = false) => {
+export const readSharedData = async (adminId = null, includeDeleted = false, options = null) => {
   const NORMALIZATION_VERSION_KEY = 'whiskeyballet-normalization-version'
   const CURRENT_VERSION = '1' // Increment this when normalization logic changes
-  
-  console.log(`📖 Storage: Reading shared data for adminId: ${adminId}${includeDeleted ? ' (including deleted)' : ''}`)
   
   try {
     let data
@@ -417,10 +415,9 @@ export const readSharedData = async (adminId = null, includeDeleted = false) => 
       // Web mode
 
       // Firebase-first read: when configured, treat Firebase as primary source when online.
-      // The Firebase reader will automatically fall back to IndexedDB when offline.
       if (typeof window !== 'undefined' && isFirebaseConfigured()) {
         try {
-          data = await readSharedDataOnline(adminId, includeDeleted)
+          data = await readSharedDataOnline(adminId, includeDeleted, options || {})
         } catch (firebaseReadError) {
           console.warn('Firebase read failed, falling back to local storage:', firebaseReadError)
           data = null
@@ -533,19 +530,9 @@ export const readSharedData = async (adminId = null, includeDeleted = false) => 
  * Write shared data (inventory, transactions - now per-admin isolated)
  * @param {object} data - The data to write
  * @param {number|string} adminId - The admin ID to write data for (null for legacy shared data)
- * This ensures data isolation: each admin has their own inventory, transactions, etc.
+ * @param {object} [options] - Optional: { inventoryIdsToDelete: string[] }, { writeOnlyStores: string[] }
  */
-export const writeSharedData = async (data, adminId = null) => {
-  console.log(`💾 Storage: Writing shared data for adminId: ${adminId}`)
-  console.log(`📊 Data summary:`, {
-    inventory: data.inventory?.length || 0,
-    transactions: data.transactions?.length || 0,
-    purchaseOrders: data.purchaseOrders?.length || 0,
-    suppliers: data.suppliers?.length || 0,
-    customers: data.customers?.length || 0,
-    expenses: data.expenses?.length || 0
-  })
-  
+export const writeSharedData = async (data, adminId = null, options = null) => {
   try {
     if (isElectron()) {
       // Desktop mode: write to admin-specific or shared file
@@ -558,7 +545,7 @@ export const writeSharedData = async (data, adminId = null) => {
     // If the network is down, this still writes to IndexedDB and queues operations for sync.
     if (typeof window !== 'undefined' && isFirebaseConfigured()) {
       try {
-        await writeSharedDataOnline(data, adminId)
+        await writeSharedDataOnline(data, adminId, options || {})
         return true
       } catch (firebaseWriteError) {
         // Important: writeSharedDataOnline already cached locally and queued for retry.

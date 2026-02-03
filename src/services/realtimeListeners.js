@@ -58,6 +58,17 @@ export function subscribeToCustomers(adminId, onUpdate, onError) {
   });
 }
 
+export function subscribeToCustomersByBranch(adminId, branchId, onUpdate, onError) {
+  return subscribeToCollection({
+    db,
+    collectionPath: 'customers',
+    adminId,
+    onUpdate,
+    onError,
+    queryConstraints: branchId ? [where('branchId', '==', branchId)] : [],
+  })
+}
+
 // Suppliers real-time listener
 export function subscribeToSuppliers(adminId, onUpdate, onError) {
   return subscribeToCollection({

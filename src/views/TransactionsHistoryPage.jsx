@@ -7,7 +7,7 @@ import AdminTrashBin from "../components/AdminTrashBin"
 import TransactionDetailsModal from "../components/TransactionDetailsModal"
 import BranchSelector from "../components/BranchSelector"
 import { getAdminIdForStorage, getAllUsers } from "../utils/auth"
-import { subscribeToTransactions, subscribeToUsersByBranch } from "../services/realtimeListeners"
+import { subscribeToTransactions, subscribeToTransactionsByBranch, subscribeToUsersByBranch } from "../services/realtimeListeners"
 import { getAllBranches } from "../services/branchService"
 import { exportTransactionsToCSV } from "../utils/csvExport"
 import { getFirstName } from "../utils/nameHelpers"
@@ -54,8 +54,12 @@ export default function TransactionsHistoryPage({ currentUser }) {
     if (!currentUser) return;
     setLoading(true);
     const adminId = getAdminIdForStorage(currentUser);
+    const branchIdForQuery = (currentUser.role === 'cashier' || currentUser.role === 'manager') ? currentUser.branchId : null
+    const subscribeTxn = branchIdForQuery
+      ? (cb) => subscribeToTransactionsByBranch(adminId, branchIdForQuery, cb)
+      : (cb) => subscribeToTransactions(adminId, cb)
     let unsub = null;
-    unsub = subscribeToTransactions(adminId, (allTransactions) => {
+    unsub = subscribeTxn((allTransactions) => {
       let filteredTransactions = allTransactions;
       // Load cashiers list in realtime for manager/admin filtering
       if (currentUser.role === 'cashier') {

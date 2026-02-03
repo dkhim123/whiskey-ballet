@@ -17,6 +17,7 @@ import ThemeToggle from "./ThemeToggle"
 import { getStorageMode } from "../utils/storage"
 import { getFirstName } from "../utils/nameHelpers"
 import { getAllBranches } from "../services/branchService"
+import { getAccessiblePages } from "../utils/permissions"
 
 function BrandBadge({ size = "lg" }) {
   const [imgOk, setImgOk] = useState(true)
@@ -114,9 +115,8 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
-  const mainMenuItems = userRole === "admin"
+  const allMainMenuItems = userRole === "admin"
     ? [
-        // Admin: Monitoring only - no operational features
         { id: "admin-dashboard", label: "Dashboard", icon: DashboardIcon },
         { id: "inventory", label: "Inventory", icon: BoxIcon },
         { id: "reports", label: "Reports", icon: ChartBarIcon },
@@ -125,9 +125,9 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
       ]
     : userRole === "manager"
     ? [
-        // Manager: Full branch operations + cashier management
         { id: "manager-dashboard", label: "Dashboard", icon: DashboardIcon },
         { id: "inventory", label: "Inventory", icon: BoxIcon },
+        { id: "customers", label: "Customers", icon: UsersIcon },
         { id: "suppliers", label: "Suppliers", icon: UsersIcon },
         { id: "purchase-orders", label: "Purchase Orders", icon: DocumentIcon },
         { id: "supplier-payments", label: "Payments", icon: CashIcon },
@@ -137,24 +137,27 @@ export default function Sidebar({ currentPage, onPageChange, userRole, currentUs
         { id: "branch-staff", label: "My Cashiers", icon: UsersIcon },
       ]
     : [
-        // Cashier: POS + limited features
         { id: "pos", label: "POS System", icon: ShoppingCartIcon },
         { id: "cashier-dashboard", label: "Dashboard", icon: DashboardIcon },
         { id: "inventory", label: "Inventory", icon: BoxIcon },
         { id: "customers", label: "Customers", icon: UsersIcon },
       ]
 
+  const allowedPages = currentUser ? getAccessiblePages(currentUser) : []
+  const mainMenuItems = allMainMenuItems.filter((item) => allowedPages.includes(item.id))
+
   const commonSettingsItems = [
     { id: "profile", label: "My Profile", icon: UsersIcon },
     { id: "user-guide", label: "User Guide", icon: HelpIcon },
   ]
-  const adminMenuItems = userRole === "admin"
+  const adminMenuItemsRaw = userRole === "admin"
     ? [
         { id: "admin-settings", label: "Admin Settings", icon: SettingsIcon },
         { id: "branch-management", label: "Branches", icon: SettingsIcon },
         ...commonSettingsItems
       ]
     : commonSettingsItems
+  const adminMenuItems = adminMenuItemsRaw.filter((item) => allowedPages.includes(item.id))
 
   return (
     <>

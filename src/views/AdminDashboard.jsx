@@ -26,6 +26,7 @@ import { getTodayAtMidnight, getTodayISO, formatTimeAgo, getTimestampMs } from "
 import { checkIfMigrationNeeded, migrateDataToBranchIsolation } from "../utils/dataMigration"
 import { getAllBranches } from "../services/branchService"
 import { readSharedData } from "../utils/storage"
+import { getAccessiblePages } from "../utils/permissions"
 
 export default function AdminDashboard({ currentUser, onPageChange }) {
   const isAdminView = currentUser?.role === 'admin'
@@ -643,57 +644,36 @@ export default function AdminDashboard({ currentUser, onPageChange }) {
           </div>
         </div>
 
-        {/* Quick Actions - Full Width (Admin: Monitoring Only) */}
+        {/* Quick Actions - only show buttons for pages the user is allowed to access */}
         <div className="mb-6">
           <h3 className="text-base font-bold text-foreground mb-3 flex items-center gap-2">
             <span>⚡</span>
             <span>Quick Actions</span>
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {/* Admin can only access monitoring pages, not operational pages */}
-            <button
-              onClick={() => onPageChange && onPageChange('reports')}
-              className="bg-linear-to-br from-green-500/10 to-green-600/5 hover:from-green-500/20 hover:to-green-600/10 border-2 border-green-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-            >
-              <div className="text-3xl mb-2">📊</div>
-              <div className="text-sm font-bold text-green-700 dark:text-green-400">Reports</div>
-              <div className="text-xs text-muted-foreground mt-1">View analytics</div>
-            </button>
-            <button
-              onClick={() => onPageChange && onPageChange('expenses')}
-              className="bg-linear-to-br from-orange-500/10 to-orange-600/5 hover:from-orange-500/20 hover:to-orange-600/10 border-2 border-orange-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-            >
-              <div className="text-3xl mb-2">💸</div>
-              <div className="text-sm font-bold text-orange-700 dark:text-orange-400">Expenses</div>
-              <div className="text-xs text-muted-foreground mt-1">Track spending</div>
-            </button>
-            <button
-              onClick={() => onPageChange && onPageChange('transactions-history')}
-              className="bg-linear-to-br from-blue-500/10 to-blue-600/5 hover:from-blue-500/20 hover:to-blue-600/10 border-2 border-blue-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-            >
-              <div className="text-3xl mb-2">📋</div>
-              <div className="text-sm font-bold text-blue-700 dark:text-blue-400">Transactions</div>
-              <div className="text-xs text-muted-foreground mt-1">View history</div>
-            </button>
-            {isAdminView ? (
-              <button
-                onClick={() => onPageChange && onPageChange('branch-management')}
-                className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-              >
-                <div className="text-3xl mb-2">🏢</div>
-                <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Branches</div>
-                <div className="text-xs text-muted-foreground mt-1">Manage locations</div>
-              </button>
-            ) : (
-              <button
-                onClick={() => onPageChange && onPageChange('inventory')}
-                className="bg-linear-to-br from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-2 border-purple-500/30 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg"
-              >
-                <div className="text-3xl mb-2">📦</div>
-                <div className="text-sm font-bold text-purple-700 dark:text-purple-400">Inventory</div>
-                <div className="text-xs text-muted-foreground mt-1">View stock</div>
-              </button>
-            )}
+            {(() => {
+              const allowed = getAccessiblePages(currentUser)
+              const actions = [
+                { page: 'reports', label: 'Reports', sub: 'View analytics', emoji: '📊', btnClass: 'from-green-500/10 to-green-600/5 hover:from-green-500/20 hover:to-green-600/10 border-green-500/30', textClass: 'text-green-700 dark:text-green-400' },
+                { page: 'expenses', label: 'Expenses', sub: 'Track spending', emoji: '💸', btnClass: 'from-orange-500/10 to-orange-600/5 hover:from-orange-500/20 hover:to-orange-600/10 border-orange-500/30', textClass: 'text-orange-700 dark:text-orange-400' },
+                { page: 'transactions-history', label: 'Transactions', sub: 'View history', emoji: '📋', btnClass: 'from-blue-500/10 to-blue-600/5 hover:from-blue-500/20 hover:to-blue-600/10 border-blue-500/30', textClass: 'text-blue-700 dark:text-blue-400' },
+                ...(isAdminView && allowed.includes('branch-management') ? [{ page: 'branch-management', label: 'Branches', sub: 'Manage locations', emoji: '🏢', btnClass: 'from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-purple-500/30', textClass: 'text-purple-700 dark:text-purple-400' }] : []),
+                ...(!isAdminView && allowed.includes('inventory') ? [{ page: 'inventory', label: 'Inventory', sub: 'View stock', emoji: '📦', btnClass: 'from-purple-500/10 to-purple-600/5 hover:from-purple-500/20 hover:to-purple-600/10 border-purple-500/30', textClass: 'text-purple-700 dark:text-purple-400' }] : []),
+              ]
+              return actions
+                .filter((a) => allowed.includes(a.page))
+                .map((a) => (
+                  <button
+                    key={a.page}
+                    onClick={() => onPageChange && onPageChange(a.page)}
+                    className={`bg-linear-to-br ${a.btnClass} border-2 rounded-xl p-4 transition-all hover:scale-[1.02] active:scale-95 hover:shadow-lg`}
+                  >
+                    <div className="text-3xl mb-2">{a.emoji}</div>
+                    <div className={`text-sm font-bold ${a.textClass}`}>{a.label}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{a.sub}</div>
+                  </button>
+                ))
+            })()}
           </div>
         </div>
 

@@ -13,10 +13,11 @@ import InventoryCSVUpload from "../components/InventoryCSVUpload"
 import Pagination from "../components/Pagination"
 import BranchSelector from "../components/BranchSelector"
 import { getAdminIdForStorage } from "../utils/auth"
-import { subscribeToInventory } from "../services/realtimeListeners"
+import { subscribeToInventory, subscribeToInventoryByBranch } from "../services/realtimeListeners"
 import { logActivity, ACTIVITY_TYPES } from "../utils/activityLog"
 import { useDebounce } from "../hooks/useDebounce"
 import { readSharedData, writeSharedData } from "../utils/storage"
+import { inventoryDocId } from "../utils/firebaseStorageOnline"
 import { getAllBranches } from "../services/branchService"
 
 const CATEGORIES = ["All", "Red Wine", "White Wine", "Rosé Wine", "Sparkling Wine", "Whisky", "Vodka", "Rum", "Gin", "Tequila", "Brandy", "Liqueur", "Beer", "Spirits", "Mixers", "Other"]
@@ -40,6 +41,8 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     }
   })
   const isSavingRef = useRef(false) // Track if we're currently saving
+  const branchListCacheRef = useRef({ list: null, at: 0 })
+  const BRANCH_CACHE_MS = 60000 // 60s cache for getAllBranches
   const [showBarcodeModal, setShowBarcodeModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
@@ -145,16 +148,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       }
 
       const adminId = getAdminIdForStorage(currentUser)
-      console.log(`💾 InventoryPage: Saving ${updatedInventory.length} products for user ${currentUser.name} (AdminId: ${adminId})`)
-      
-      // DEBUG: Log what's in updatedInventory
-      console.log(`🔍 updatedInventory contents:`)
-      updatedInventory.forEach((item, idx) => {
-        console.log(`   ${idx + 1}. ${item.name} - branchId: ${item.branchId}, id: ${item.id}`)
-      })
-      
-      // Read shared data INCLUDING deleted items to preserve them
-      const sharedData = await readSharedData(adminId, true)
+
+      // Read only inventory (avoids 9 Firestore reads) so delete/save is fast
+      const sharedData = await readSharedData(adminId, true, { stores: ['inventory'] })
       
       // CRITICAL: When saving, merge with all inventory from other branches
       // Only update items from the branch being edited
@@ -187,10 +183,16 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
       const normalizedEditingBranch = normalizeBranchId(editingBranch)
       let branchList = []
-      try {
-        branchList = (await getAllBranches()) || []
-      } catch (e) {
-        console.warn('getAllBranches in saveInventory failed:', e)
+      const now = Date.now()
+      if (branchListCacheRef.current.list && (now - branchListCacheRef.current.at) < BRANCH_CACHE_MS) {
+        branchList = branchListCacheRef.current.list
+      } else {
+        try {
+          branchList = (await getAllBranches()) || []
+          branchListCacheRef.current = { list: branchList, at: now }
+        } catch (e) {
+          branchList = branchListCacheRef.current.list || []
+        }
       }
       const editingMeta = branchList.find((b) => normalizeBranchId(b.id) === normalizedEditingBranch)
       const normalizedEditingName = editingMeta?.name ? normalizeBranchId(editingMeta.name) : ''
@@ -202,8 +204,6 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       let otherBranchItems = editingBranch
         ? allInventoryItems.filter((item) => !isEditingBranchItem(item))
         : (currentUser.role === 'admin' ? [] : allInventoryItems) // only admin can have no branch (all-branches merge)
-
-      console.log(`🔀 After filtering, otherBranchItems has ${otherBranchItems.length} items (excluded branch: ${editingBranch}):`)
 
       // Get existing deleted items from storage (preserve from all branches)
       const existingDeletedItems = allInventoryItems.filter((item) => item.deletedAt != null)
@@ -230,43 +230,29 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
         ...preservedDeletedItems // Previously deleted items
       ]
       
-      console.log(`� SAVE BREAKDOWN:`)
-      console.log(`   - Other branches: ${otherBranchItems.length} items`)
-      console.log(`   - Current branch (${editingBranch || 'ALL'}): ${nonDeletedItems.length} active items`)
-      console.log(`   - Newly deleted: ${newlyDeletedItems.length} items`)
-      console.log(`   - Previously deleted: ${preservedDeletedItems.length} items`)
-      console.log(`   - TOTAL: ${allItems.length} items`)
-      
-      // Log branch distribution for verification
-      const branchCounts = {}
-      allItems.forEach(item => {
-        const branch = item.branchId || 'UNASSIGNED'
-        branchCounts[branch] = (branchCounts[branch] || 0) + 1
-      })
-      console.log(`   - By branch:`, branchCounts)
-      
-      await writeSharedData({
-        ...sharedData,
-        inventory: allItems
-      }, adminId)
-      
-      console.log(`✅ InventoryPage: Successfully saved inventory to adminId: ${adminId}`)
-      
-      // Update local state immediately BEFORE clearing the lock
-      // Store complete inventory for admin
+      // When saving a single branch, pre-compute Firestore doc IDs to delete so write path skips getDocs
+      let inventoryIdsToDelete = null
+      if (editingBranch) {
+        const idsToKeepSet = new Set(allItems.map((item) => inventoryDocId(item)))
+        inventoryIdsToDelete = allInventoryItems
+          .filter((item) => isEditingBranchItem(item))
+          .map((item) => inventoryDocId(item))
+          .filter((docId) => !idsToKeepSet.has(docId))
+      }
+
+      await writeSharedData(
+        { ...sharedData, inventory: allItems },
+        adminId,
+        { inventoryIdsToDelete, writeOnlyStores: ['inventory'] }
+      )
+
       setAllInventory(allItems)
-      // Update filtered view
       setInventory(updatedInventory)
-      
-      // Also update parent component if callback provided
       if (onInventoryChange) {
         onInventoryChange(updatedInventory)
       }
-      
-      // CRITICAL: Wait a moment to ensure state update propagates before allowing auto-refresh
-      await new Promise(resolve => setTimeout(resolve, 100))
-      
-      isSavingRef.current = false // Clear flag after state updates complete
+
+      isSavingRef.current = false
       return true
     } catch (error) {
       console.error("❌ Error saving inventory:", error)
@@ -275,13 +261,15 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     }
   }
 
-  // Real-time Firestore inventory listener
+  // Real-time Firestore inventory listener (branch-scoped for cashier/manager so Firestore rules allow list)
   useEffect(() => {
     if (!currentUser) return;
     const adminId = getAdminIdForStorage(currentUser);
     const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
-    
-    const unsub = subscribeToInventory(adminId, (data) => {
+    const useBranchScope = isBranchScopedRole && currentUser.branchId
+    const branchIdForQuery = useBranchScope ? currentUser.branchId : (currentUser.role === 'admin' && selectedBranch ? selectedBranch : null)
+
+    const onData = (data) => {
       const activeOnly = (data || []).filter(item => !item.deletedAt);
       setAllInventory(activeOnly);
       let filteredInventory = activeOnly;
@@ -301,8 +289,12 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
       if (onInventoryChange) {
         onInventoryChange(filteredInventory);
       }
-    });
-    return () => { 
+    }
+
+    const unsub = branchIdForQuery
+      ? subscribeToInventoryByBranch(adminId, branchIdForQuery, onData)
+      : subscribeToInventory(adminId, onData)
+    return () => {
       if (typeof unsub === 'function') {
         unsub();
       }
@@ -507,6 +499,9 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     }
   }
 
+  // Unique row key per item (branchId + id) so selection never affects same-id items in other branches
+  const getItemRowKey = (item) => `${item?.branchId ?? 'u'}_${item?.id ?? ''}`
+
   const handleDeleteProduct = async (productId) => {
     if (isAdminReadOnly) {
       alert('Admin is monitor-only. Deleting products is disabled.')
@@ -529,7 +524,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
 
     if (saved) {
       setShowEditModal(false)
-      setSelectedIds(prev => prev.filter(id => id !== productId))
+      setSelectedIds(prev => prev.filter(k => k !== getItemRowKey(product)))
 
       logActivity(
         ACTIVITY_TYPES.PRODUCT_DELETED || 'product-deleted',
@@ -537,7 +532,6 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
         { productId: productId, productName: product.name, category: product.category },
         currentUser
       )
-      setTimeout(() => loadInventory(), 200)
       alert(`Product "${product.name}" has been deleted successfully`)
     } else {
       console.error(`❌ Failed to delete product ${productId}`)
@@ -545,7 +539,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     }
   }
 
-  // Bulk delete: soft-delete all selected items (current branch only; selection is from current view)
+  // Bulk delete: soft-delete only the exact selected rows (match by row key so no cross-branch mistakes)
   const handleBulkDeleteSelected = async () => {
     if (isAdminReadOnly || selectedIds.length === 0) {
       if (selectedIds.length === 0) alert('No items selected. Select items using the checkboxes first.')
@@ -553,17 +547,16 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     }
     if (!confirm(`Delete ${selectedIds.length} selected item(s)? They will be removed from this branch.`)) return
 
-    const updatedInventory = inventory.map(item =>
-      selectedIds.includes(item.id)
+    const updatedInventory = inventory.map(item => {
+      const rowKey = getItemRowKey(item)
+      return selectedIds.includes(rowKey)
         ? { ...item, deletedAt: new Date().toISOString(), deletedBy: currentUser?.id }
         : item
-    )
+    })
     const saved = await saveInventory(updatedInventory)
     if (saved) {
       setSelectedIds([])
       logActivity(ACTIVITY_TYPES.PRODUCT_DELETED || 'product-deleted', `Bulk deleted ${selectedIds.length} products`, { count: selectedIds.length }, currentUser)
-      // Reload from storage so list and counts stay in sync (saveInventory already set state to active-only)
-      setTimeout(() => loadInventory(), 300)
       alert(`${selectedIds.length} item(s) deleted successfully.`)
     } else {
       alert('Failed to delete. Please try again.')
@@ -592,7 +585,6 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
     if (saved) {
       setSelectedIds([])
       logActivity(ACTIVITY_TYPES.PRODUCT_DELETED || 'product-deleted', `Deleted all ${branchItemCount} products in branch ${branchName}`, { branchId: editingBranch, count: branchItemCount }, currentUser)
-      setTimeout(() => loadInventory(), 300)
       alert(`All ${branchItemCount} item(s) in branch "${branchName}" have been deleted.`)
     } else {
       alert('Failed to delete branch inventory. Please try again.')
@@ -604,7 +596,7 @@ export default function InventoryPage({ onInventoryChange, currentUser }) {
   }
 
   const handleSelectAllOnPage = () => {
-    setSelectedIds(paginatedInventory.map(item => item.id))
+    setSelectedIds(paginatedInventory.map(item => getItemRowKey(item)))
   }
 
   const handleClearSelection = () => {
@@ -1098,9 +1090,6 @@ if (saved) {
                     }
                     setInventory(filtered)
                   }
-                  // Delay loadInventory slightly to let Firestore index the new documents
-                  setTimeout(() => loadInventory(), 800)
-                  setTimeout(() => loadInventory(), 1500)
                 }}
               />
             </div>

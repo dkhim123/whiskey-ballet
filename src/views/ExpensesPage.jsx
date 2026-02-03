@@ -6,7 +6,7 @@ import AccountabilityModal from "../components/AccountabilityModal"
 import BranchSelector from "../components/BranchSelector"
 import { getAdminIdForStorage } from "../utils/auth"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
-import { subscribeToExpenses, subscribeToTransactions } from "../services/realtimeListeners"
+import { subscribeToExpenses, subscribeToExpensesByBranch, subscribeToTransactions, subscribeToTransactionsByBranch } from "../services/realtimeListeners"
 import { exportExpensesToCSV } from "../utils/csvExport"
 
 export default function ExpensesPage({ currentUser }) {
@@ -53,21 +53,23 @@ export default function ExpensesPage({ currentUser }) {
       return
     }
 
-    const unsubExpenses = subscribeToExpenses(adminId, (data) => {
-      if (currentUser.role === "admin") {
-        setAllExpenses(data || [])
-      } else {
-        // Non-admin: strict branch isolation
-        const filtered = (data || []).filter(
-          (e) => !!e.branchId && e.branchId === currentUser.branchId
-        )
-        setExpenses(filtered)
-      }
-    })
+    const branchIdForQuery = currentUser.role !== "admin" ? currentUser.branchId : null
+    const unsubExpenses = branchIdForQuery
+      ? subscribeToExpensesByBranch(adminId, branchIdForQuery, (data) => {
+          setExpenses(data || [])
+        })
+      : subscribeToExpenses(adminId, (data) => {
+          if (currentUser.role === "admin") {
+            setAllExpenses(data || [])
+          } else {
+            const filtered = (data || []).filter((e) => !!e.branchId && e.branchId === currentUser.branchId)
+            setExpenses(filtered)
+          }
+        })
 
-    const unsubTransactions = subscribeToTransactions(adminId, (data) => {
-      setAllTransactions(data || [])
-    })
+    const unsubTransactions = branchIdForQuery
+      ? subscribeToTransactionsByBranch(adminId, branchIdForQuery, (data) => setAllTransactions(data || []))
+      : subscribeToTransactions(adminId, (data) => setAllTransactions(data || []))
 
     return () => {
       try {

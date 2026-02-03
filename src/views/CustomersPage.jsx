@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { toast } from "sonner"
 import TopBar from "../components/TopBar"
 import { getAdminIdForStorage } from "../utils/auth"
-import { subscribeToCustomers } from "../services/realtimeListeners"
+import { subscribeToCustomers, subscribeToCustomersByBranch } from "../services/realtimeListeners"
 import { parseFormValue } from "../utils/dateHelpers"
 import { exportCustomersToCSV } from "../utils/csvExport"
 import { readData, writeData, readSharedData, writeSharedData } from "../utils/storage"
@@ -17,29 +17,21 @@ export default function CustomersPage({ currentUser }) {
   const [showDetailsModal, setShowDetailsModal] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
 
-  // Real-time Firestore customers listener
+  // Real-time Firestore customers listener (branch-scoped for cashier/manager for accountability and rules)
   useEffect(() => {
     if (!currentUser) return;
     const adminId = getAdminIdForStorage(currentUser);
-    let unsub = null;
-    unsub = subscribeToCustomers(adminId, (data) => {
-      setCustomers(data);
-    });
+    const useBranchScope = (currentUser.role === 'cashier' || currentUser.role === 'manager') && currentUser.branchId;
+    const unsub = useBranchScope
+      ? subscribeToCustomersByBranch(adminId, currentUser.branchId, (data) => setCustomers(data))
+      : subscribeToCustomers(adminId, (data) => setCustomers(data));
     return () => { if (unsub) unsub(); };
   }, [currentUser]);
 
-  // Filter by branch first - strict branch isolation for cashiers
-  const branchFilteredCustomers = currentUser?.role === 'cashier'
-    ? customers.filter(c => {
-        const matches = c.branchId === currentUser.branchId
-        if (!c.branchId) {
-          console.log(`⚠️ Customer "${c.name}" has NO branchId assigned!`)
-        }
-        return matches
-      })
-    : customers // Admin sees all
-  
-  console.log(`👥 CustomersPage: User ${currentUser?.name} (${currentUser?.role}) sees ${branchFilteredCustomers.length}/${customers.length} customers (Branch: ${currentUser?.branchId || 'N/A'})`)
+  // For cashier/manager we already subscribed by branch; for admin we have all. No extra filter needed.
+  const branchFilteredCustomers = customers
+
+  console.log(`👥 CustomersPage: User ${currentUser?.name} (${currentUser?.role}) sees ${branchFilteredCustomers.length} customers (Branch: ${currentUser?.branchId || 'all'})`)
     
   const filteredCustomers = branchFilteredCustomers.filter((customer) =>
     customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -61,41 +53,29 @@ export default function CustomersPage({ currentUser }) {
       }
 
       const adminId = getAdminIdForStorage(currentUser)
-      const sharedData = await readSharedData(adminId)
-      const maxId = Math.max(...(sharedData.customers || []).map(c => c.id), 0)
-      
+      const sharedData = await readSharedData(adminId, false, { stores: ['customers'] })
+      const existingCustomers = sharedData.customers || []
+      const maxId = Math.max(...existingCustomers.map(c => c.id), 0)
+
       const customerToAdd = {
         ...newCustomer,
         id: maxId + 1,
-        branchId: currentUser?.branchId, // No fallback - validated above
+        branchId: currentUser?.branchId,
         createdBy: {
           id: currentUser?.id,
           name: currentUser?.name || currentUser?.email,
           role: currentUser?.role
         },
-        balance: newCustomer.loanAmount || 0, // Initial balance equals initial loan
+        balance: newCustomer.loanAmount || 0,
         createdDate: new Date().toISOString(),
       }
 
-      console.log('👤 Creating customer with metadata:', {
-        name: customerToAdd.name,
-        branchId: customerToAdd.branchId,
-        createdBy: customerToAdd.createdBy,
-        currentUser: {
-          id: currentUser?.id,
-          name: currentUser?.name,
-          email: currentUser?.email,
-          role: currentUser?.role
-        }
-      })
-
-      const updatedCustomers = [...(sharedData.customers || []), customerToAdd]
-      
-      // Save to admin-specific storage
-      await writeSharedData({
-        ...sharedData,
-        customers: updatedCustomers
-      }, adminId)
+      const updatedCustomers = [...existingCustomers, customerToAdd]
+      await writeSharedData(
+        { ...sharedData, customers: updatedCustomers },
+        adminId,
+        { writeOnlyStores: ['customers'] }
+      )
 
       setCustomers(updatedCustomers)
       setShowAddModal(false)
@@ -115,14 +95,11 @@ export default function CustomersPage({ currentUser }) {
       }
 
       const adminId = getAdminIdForStorage(currentUser)
-      const sharedData = await readSharedData(adminId)
+      const sharedData = await readSharedData(adminId, false, { stores: ['customers'] })
       const allCustomers = sharedData.customers || []
       const updatedCustomers = allCustomers.map(c => {
         if (c.id === updatedCustomer.id) {
-          // Preserve branchId - should already exist from creation
-          // Only fallback to current user's branch if somehow missing (data migration scenario)
           const preservedBranchId = c.branchId || currentUser?.branchId
-          
           return {
             ...updatedCustomer,
             branchId: updatedCustomer.branchId || preservedBranchId,
@@ -131,18 +108,17 @@ export default function CustomersPage({ currentUser }) {
               name: currentUser?.name || currentUser?.email,
               role: currentUser?.role
             },
-            // Preserve balance if not in updatedCustomer
             balance: updatedCustomer.balance !== undefined ? updatedCustomer.balance : (c.balance || 0)
           }
         }
         return c
       })
 
-      // Save to admin-specific storage
-      await writeSharedData({
-        ...sharedData,
-        customers: updatedCustomers
-      }, adminId)
+      await writeSharedData(
+        { ...sharedData, customers: updatedCustomers },
+        adminId,
+        { writeOnlyStores: ['customers'] }
+      )
 
       setCustomers(updatedCustomers)
       setShowEditModal(false)
@@ -160,13 +136,15 @@ export default function CustomersPage({ currentUser }) {
 
   // Calculate stats from branch-filtered customers, not all customers
   const totalCustomers = branchFilteredCustomers.length
-  const customersWithLoans = branchFilteredCustomers.filter(c => c.loanAmount > 0).length
-  const totalLoansOwed = branchFilteredCustomers.reduce((sum, c) => sum + (c.loanAmount || 0), 0)
-  
+  const loanAmountFor = (c) => c.loanAmount ?? c.balance ?? 0
+  const customersWithLoans = branchFilteredCustomers.filter(c => loanAmountFor(c) > 0).length
+  const totalLoansOwed = branchFilteredCustomers.reduce((sum, c) => sum + loanAmountFor(c), 0)
+
   // Check for loans due today (from branch-filtered customers)
   const today = new Date().toISOString().split('T')[0]
   const loansDueToday = branchFilteredCustomers.filter(c => {
-    if (!c.loanDueDate || !c.loanAmount || c.loanAmount <= 0) return false
+    const amt = loanAmountFor(c)
+    if (!c.loanDueDate || !amt || amt <= 0) return false
     const dueDate = new Date(c.loanDueDate).toISOString().split('T')[0]
     return dueDate === today
   })
@@ -215,7 +193,7 @@ export default function CustomersPage({ currentUser }) {
                     <span className="font-semibold text-foreground">{customer.name}</span>
                     <span className="text-muted-foreground ml-2">📞 {customer.phone || 'No phone'}</span>
                   </div>
-                  <span className="font-bold text-destructive">KES {(customer.loanAmount || 0).toLocaleString()}</span>
+                  <span className="font-bold text-destructive">KES {(customer.loanAmount ?? customer.balance ?? 0).toLocaleString()}</span>
                 </div>
               ))}
             </div>
@@ -300,8 +278,8 @@ export default function CustomersPage({ currentUser }) {
                       )}
                     </td>
                     <td className="px-6 py-4 text-right text-sm">
-                      <span className={`font-semibold ${customer.loanAmount > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
-                        KES {(customer.loanAmount || 0).toLocaleString()}
+                      <span className={`font-semibold ${(customer.loanAmount ?? customer.balance ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                        KES {(customer.loanAmount ?? customer.balance ?? 0).toLocaleString()}
                       </span>
                       {customer.loanDate && customer.loanAmount > 0 && (
                         <div className="text-xs text-muted-foreground">
@@ -823,9 +801,10 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
       const adminId = getAdminIdForStorage(currentUser)
       const sharedData = await readSharedData(adminId)
       
-      // Calculate new loan and balance amounts
-      const newLoanAmount = Math.max(0, (customer.loanAmount || 0) - paymentAmount)
-      const newBalance = Math.max(0, (customer.balance || 0) - paymentAmount)
+      // Calculate new loan and balance amounts (use loanAmount ?? balance so legacy records work)
+      const currentLoan = customer.loanAmount ?? customer.balance ?? 0
+      const newLoanAmount = Math.max(0, currentLoan - paymentAmount)
+      const newBalance = Math.max(0, (customer.balance ?? customer.loanAmount ?? 0) - paymentAmount)
       const isFullyPaid = newLoanAmount === 0
       
       // Update customer loan amount AND balance
@@ -1001,11 +980,11 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
           
           <div className="flex justify-between pt-2 border-t border-border">
             <span className="text-muted-foreground">Loan Amount:</span>
-            <span className={`font-bold text-lg ${customer.loanAmount > 0 ? 'text-destructive' : 'text-success'}`}>
-              KES {(customer.loanAmount || 0).toLocaleString()}
+            <span className={`font-bold text-lg ${(customer.loanAmount ?? customer.balance ?? 0) > 0 ? 'text-destructive' : 'text-success'}`}>
+              KES {(customer.loanAmount ?? customer.balance ?? 0).toLocaleString()}
             </span>
           </div>
-          {customer.loanAmount > 0 && (
+          {(customer.loanAmount ?? customer.balance ?? 0) > 0 && (
             <>
               {customer.loanDate && (
                 <div className="flex justify-between">
@@ -1032,7 +1011,7 @@ function CustomerDetailsModal({ customer, currentUser, onClose, onBalanceUpdate 
         </div>
 
         {/* Payment Button */}
-        {customer.loanAmount > 0 && (
+        {(customer.loanAmount ?? customer.balance ?? 0) > 0 && (
           <button
             onClick={() => setShowPaymentModal(true)}
             className="w-full px-4 py-2.5 bg-success hover:bg-success/90 text-white font-semibold rounded-lg transition-colors shadow-lg mb-6"
@@ -1191,8 +1170,8 @@ function PaymentModal({ customer, onRecord, onClose }) {
       alert('Payment amount must be greater than 0')
       return
     }
-    if (paymentAmount > customer.loanAmount) {
-      alert(`Payment amount cannot exceed loan amount of KES ${customer.loanAmount.toLocaleString()}`)
+    if (paymentAmount > loanTotal) {
+      alert(`Payment amount cannot exceed loan amount of KES ${loanTotal.toLocaleString()}`)
       return
     }
     onRecord(paymentAmount, paymentMethod)
@@ -1205,7 +1184,7 @@ function PaymentModal({ customer, onRecord, onClose }) {
         <p className="text-sm text-muted-foreground mb-6">
           Customer: <span className="font-semibold text-foreground">{customer.name}</span>
           <br />
-          Loan Amount: <span className="font-semibold text-destructive">KES {(customer.loanAmount || 0).toLocaleString()}</span>
+          Loan Amount: <span className="font-semibold text-destructive">KES {loanTotal.toLocaleString()}</span>
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -1223,14 +1202,14 @@ function PaymentModal({ customer, onRecord, onClose }) {
             <div className="mt-2 flex gap-2">
               <button
                 type="button"
-                onClick={() => setPaymentAmount(customer.loanAmount / 2)}
+                onClick={() => setPaymentAmount(loanTotal / 2)}
                 className="text-xs px-3 py-1 bg-muted hover:bg-muted/80 rounded-lg"
               >
                 50%
               </button>
               <button
                 type="button"
-                onClick={() => setPaymentAmount(customer.loanAmount)}
+                onClick={() => setPaymentAmount(loanTotal)}
                 className="text-xs px-3 py-1 bg-muted hover:bg-muted/80 rounded-lg"
               >
                 Full Payment
@@ -1271,7 +1250,7 @@ function PaymentModal({ customer, onRecord, onClose }) {
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Remaining Loan:</span>
                 <span className="font-bold text-lg text-primary">
-                  KES {(customer.loanAmount - paymentAmount).toLocaleString()}
+                  KES {(loanTotal - paymentAmount).toLocaleString()}
                 </span>
               </div>
             </div>

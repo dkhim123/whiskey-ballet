@@ -6,7 +6,7 @@ import DashboardCard from "../components/DashboardCard"
 import BranchSelector from "../components/BranchSelector"
 import { readSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
-import { subscribeToInventory, subscribeToTransactions, subscribeToUsers } from "../services/realtimeListeners"
+import { subscribeToInventoryByBranch, subscribeToTransactionsByBranch, subscribeToUsersByBranch } from "../services/realtimeListeners"
 
 export default function ManagerDashboard({ currentUser }) {
   const [selectedBranch, setSelectedBranch] = useState(currentUser?.branchId || '')
@@ -43,34 +43,40 @@ export default function ManagerDashboard({ currentUser }) {
 
     const filterBranch = (items) =>
       selectedBranch ? (items || []).filter((x) => x.branchId === selectedBranch) : (items || [])
+    const branchIdForQuery = selectedBranch || currentUser?.branchId
 
-    const unsubInventory = subscribeToInventory(adminId, (data) => {
-      const filteredInventory = filterBranch(data)
-      setInventory(filteredInventory)
-      // Recompute analytics using latest transactions in state
-      setSalesAnalytics((prev) => prev) // no-op to avoid stale closure warning
-      calculateSalesAnalytics(filteredInventory, transactions)
-    })
+    const unsubInventory = branchIdForQuery
+      ? subscribeToInventoryByBranch(adminId, branchIdForQuery, (data) => {
+          const filteredInventory = filterBranch(data)
+          setInventory(filteredInventory)
+          setSalesAnalytics((prev) => prev)
+          calculateSalesAnalytics(filteredInventory, transactions)
+        })
+      : () => {}
 
-    const unsubTransactions = subscribeToTransactions(adminId, (data) => {
-      let filteredTransactions = filterBranch(data)
-      if (selectedCashier) {
-        filteredTransactions = filteredTransactions.filter((t) => t.userId === selectedCashier)
-      }
-      setTransactions(filteredTransactions)
-      calculateSalesAnalytics(inventory, filteredTransactions)
-    })
+    const unsubTransactions = branchIdForQuery
+      ? subscribeToTransactionsByBranch(adminId, branchIdForQuery, (data) => {
+          let filteredTransactions = filterBranch(data)
+          if (selectedCashier) {
+            filteredTransactions = filteredTransactions.filter((t) => t.userId === selectedCashier)
+          }
+          setTransactions(filteredTransactions)
+          calculateSalesAnalytics(inventory, filteredTransactions)
+        })
+      : () => {}
 
-    const unsubUsers = subscribeToUsers(adminId, (data) => {
-      const users = data || []
-      const branchCashiers = selectedBranch
-        ? users.filter((u) => u.role === "cashier" && u.branchId === selectedBranch)
-        : users.filter((u) => u.role === "cashier")
-      setCashiers(branchCashiers)
-      if (selectedCashier && !branchCashiers.some((c) => c.id === selectedCashier)) {
-        setSelectedCashier("")
-      }
-    })
+    const unsubUsers = branchIdForQuery
+      ? subscribeToUsersByBranch(adminId, branchIdForQuery, (data) => {
+          const users = data || []
+          const branchCashiers = selectedBranch
+            ? users.filter((u) => u.role === "cashier" && u.branchId === selectedBranch)
+            : users.filter((u) => u.role === "cashier")
+          setCashiers(branchCashiers)
+          if (selectedCashier && !branchCashiers.some((c) => c.id === selectedCashier)) {
+            setSelectedCashier("")
+          }
+        })
+      : () => {}
 
     setLoading(false)
     return () => {

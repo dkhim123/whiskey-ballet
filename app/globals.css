@@ -184,6 +184,38 @@
   *::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--muted-foreground) / 0.5);
   }
+
+  /* Sales Accountability modal: wider, easier-to-grab scrollbar and stable gutter */
+  .scroll-area-accountability {
+    scrollbar-gutter: stable;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+  }
+  .scroll-area-accountability::-webkit-scrollbar {
+    width: 14px;
+  }
+  .scroll-area-accountability::-webkit-scrollbar-track {
+    background: var(--muted);
+    border-radius: 8px;
+    margin: 4px 0;
+  }
+  .scroll-area-accountability::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 8px;
+    border: 3px solid var(--muted);
+  }
+  .scroll-area-accountability::-webkit-scrollbar-thumb:hover {
+    filter: brightness(1.15);
+  }
+  .scroll-area-accountability::-webkit-scrollbar-thumb:active {
+    filter: brightness(1.25);
+  }
+  @supports (scrollbar-width: auto) {
+    .scroll-area-accountability {
+      scrollbar-width: auto;
+      scrollbar-color: var(--primary) var(--muted);
+    }
+  }
   
   /* Increase all text sizes for better desktop readability */
   h1 { font-size: 2.5rem; font-weight: 700; }

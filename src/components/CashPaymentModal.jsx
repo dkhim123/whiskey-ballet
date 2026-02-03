@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { formatKES } from "../utils/pricing"
 
-const AUTO_PROCEED_DELAY = 3000 // 3 seconds
+const AUTO_PROCEED_DELAY = 1000 // 1 second so receipt opens quickly
 
 export default function CashPaymentModal({ total, onComplete, onClose }) {
   const [amountPaid, setAmountPaid] = useState("")
@@ -196,7 +196,7 @@ export default function CashPaymentModal({ total, onComplete, onClose }) {
                   Continue to Receipt ✓
                 </button>
                 <p className="text-xs text-muted-foreground">
-                  Auto-proceeding in a moment...
+                  Auto-proceeding to receipt in 1 second…
                 </p>
               </div>
             </div>

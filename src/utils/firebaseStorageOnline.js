@@ -77,23 +77,17 @@ function branchPrefixFromInventoryDocId(docId) {
 
 /**
  * Write data to Firebase (primary) and cache to IndexedDB
+ * @param {object} data - Shared data (inventory, transactions, etc.)
+ * @param {string} adminId - Admin/org ID
+ * @param {object} [options] - Optional: { inventoryIdsToDelete: string[] } to skip Firestore getDocs for inventory; { writeOnlyStores: string[] } to write only those stores (e.g. ['inventory'])
  */
-export async function writeSharedDataOnline(data, adminId) {
+export async function writeSharedDataOnline(data, adminId, options = {}) {
   if (!adminId) {
     throw new Error('adminId is required for data isolation')
   }
 
-  console.log(`💾 Storage: Writing shared data for adminId: ${adminId}`)
-  console.log(`📊 Data summary:`, {
-    inventory: data.inventory?.length || 0,
-    transactions: data.transactions?.length || 0,
-    purchaseOrders: data.purchaseOrders?.length || 0,
-    suppliers: data.suppliers?.length || 0,
-    customers: data.customers?.length || 0,
-    expenses: data.expenses?.length || 0
-  })
-
-  const stores = [
+  const { inventoryIdsToDelete, writeOnlyStores } = options
+  const allStores = [
     { name: STORES.INVENTORY, items: data.inventory || [] },
     { name: STORES.TRANSACTIONS, items: data.transactions || [] },
     { name: STORES.SUPPLIERS, items: data.suppliers || [] },
@@ -104,37 +98,38 @@ export async function writeSharedDataOnline(data, adminId) {
     { name: STORES.CUSTOMERS, items: data.customers || [] },
     { name: STORES.EXPENSES, items: data.expenses || [] }
   ]
+  const stores = Array.isArray(writeOnlyStores) && writeOnlyStores.length > 0
+    ? allStores.filter((s) => writeOnlyStores.includes(s.name))
+    : allStores
 
   // Try Firebase first if online
   if (isOnline() && isFirebaseConfigured() && db) {
     try {
-      console.log('🔄 Writing to Firebase (primary storage)...')
-      
       // Write each store to Firebase
       for (const store of stores) {
         const collectionRef = collection(db, 'organizations', adminId, store.name)
         const isInventory = store.name === STORES.INVENTORY
 
-        // INVENTORY: delete Firestore docs that are no longer in payload, ONLY for branches present in the payload.
-        // So deleting all in CBD never removes Nakuru docs (branch isolation).
+        // INVENTORY: use pre-computed idsToDelete from caller to avoid second read, or compute via getDocs
         let idsToDelete = []
         if (isInventory) {
-          const existingSnap = await getDocs(collectionRef)
-          const idsToKeep = new Set((store.items || []).map((item) => inventoryDocId(item)))
-          const payloadBranchPrefixes = new Set(
-            (store.items || []).map((item) => {
-              const branchId = item?.branchId != null && item.branchId !== '' ? String(item.branchId) : 'unassigned'
-              return branchId.replace(/\//g, '_').replace(/\s/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
-            })
-          )
-          idsToDelete = existingSnap.docs
-            .filter(
-              (d) =>
-                !idsToKeep.has(d.id) && payloadBranchPrefixes.has(branchPrefixFromInventoryDocId(d.id))
+          if (Array.isArray(inventoryIdsToDelete)) {
+            idsToDelete = inventoryIdsToDelete
+          } else {
+            const existingSnap = await getDocs(collectionRef)
+            const idsToKeep = new Set((store.items || []).map((item) => inventoryDocId(item)))
+            const payloadBranchPrefixes = new Set(
+              (store.items || []).map((item) => {
+                const branchId = item?.branchId != null && item.branchId !== '' ? String(item.branchId) : 'unassigned'
+                return branchId.replace(/\//g, '_').replace(/\s/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+              })
             )
-            .map((d) => d.id)
-          if (idsToDelete.length > 0) {
-            console.log(`🗑️ Inventory: removing ${idsToDelete.length} obsolete doc(s) from Firestore (branches in payload only)`)
+            idsToDelete = existingSnap.docs
+              .filter(
+                (d) =>
+                  !idsToKeep.has(d.id) && payloadBranchPrefixes.has(branchPrefixFromInventoryDocId(d.id))
+              )
+              .map((d) => d.id)
           }
         }
 
@@ -160,7 +155,6 @@ export async function writeSharedDataOnline(data, adminId) {
 
             await batch.commit()
           }
-          console.log(`✅ Wrote ${store.items.length} items to Firebase ${store.name}`)
         }
 
         // INVENTORY: batch-delete obsolete docs (max 500 per batch)
@@ -175,7 +169,6 @@ export async function writeSharedDataOnline(data, adminId) {
             }
             await batch.commit()
           }
-          console.log(`✅ Deleted ${idsToDelete.length} obsolete inventory doc(s) from Firestore`)
         }
       }
 
@@ -240,12 +233,11 @@ export async function writeSharedDataOnline(data, adminId) {
 
 /**
  * Cache data to IndexedDB
+ * @param {string[]} [writeOnlyStores] - When set, only cache these store names (e.g. ['inventory'])
  */
-async function cacheToIndexedDB(data, adminId) {
-  console.log('🗄️ Caching to IndexedDB...')
-  
+async function cacheToIndexedDB(data, adminId, writeOnlyStores) {
   try {
-    const stores = [
+    const allStores = [
       { name: STORES.INVENTORY, items: data.inventory || [] },
       { name: STORES.TRANSACTIONS, items: data.transactions || [] },
       { name: STORES.SUPPLIERS, items: data.suppliers || [] },
@@ -256,83 +248,86 @@ async function cacheToIndexedDB(data, adminId) {
       { name: STORES.CUSTOMERS, items: data.customers || [] },
       { name: STORES.EXPENSES, items: data.expenses || [] }
     ]
+    const stores = Array.isArray(writeOnlyStores) && writeOnlyStores.length > 0
+      ? allStores.filter((s) => writeOnlyStores.includes(s.name))
+      : allStores
 
     for (const store of stores) {
       if (store.items.length > 0) {
-        // putBatch signature: (storeName, adminId, items)
         await putBatch(store.name, adminId, store.items)
-        console.log(`💾 Cached ${store.items.length} items to IndexedDB ${store.name}`)
       }
     }
 
-    // Cache settings
-    if (data.settings) {
+    if ((!writeOnlyStores || writeOnlyStores.length === 0) && data.settings) {
       await putItem(STORES.SETTINGS, adminId, data.settings, adminId)
     }
-
-    console.log('✅ IndexedDB cache complete')
   } catch (error) {
     console.error('❌ IndexedDB cache failed:', error)
   }
 }
 
+/** Default shared data shape (empty arrays) for partial reads */
+function getDefaultSharedDataShape() {
+  return {
+    inventory: [],
+    transactions: [],
+    suppliers: [],
+    purchaseOrders: [],
+    goodsReceivedNotes: [],
+    supplierPayments: [],
+    stockAdjustments: [],
+    customers: [],
+    expenses: [],
+    settings: {
+      storeName: 'Whiskey Ballet',
+      currency: 'KES',
+      vatRate: 0.16,
+      vatEnabled: true,
+      spendingLimitPercentage: 50,
+      enableSpendingAlerts: true,
+      lastBackupDate: null
+    },
+    lastSync: new Date().toISOString()
+  }
+}
+
 /**
  * Read data from Firebase (primary) or IndexedDB (cache)
+ * @param {string} adminId - Admin/org ID
+ * @param {boolean} includeDeleted - Include soft-deleted items
+ * @param {object} [options] - Optional: { stores: string[] } to read only these stores (e.g. ['inventory']) for faster inventory-only saves
  */
-export async function readSharedDataOnline(adminId, includeDeleted = false) {
+export async function readSharedDataOnline(adminId, includeDeleted = false, options = {}) {
   if (!adminId) {
     throw new Error('adminId is required for data isolation')
   }
 
-  console.log(`📖 Storage: Reading shared data for adminId: ${adminId}`)
+  const { stores: storesFilter } = options
+  const data = getDefaultSharedDataShape()
+
+  const allStores = [
+    { name: STORES.INVENTORY, key: 'inventory' },
+    { name: STORES.TRANSACTIONS, key: 'transactions' },
+    { name: STORES.SUPPLIERS, key: 'suppliers' },
+    { name: STORES.PURCHASE_ORDERS, key: 'purchaseOrders' },
+    { name: STORES.GOODS_RECEIVED_NOTES, key: 'goodsReceivedNotes' },
+    { name: STORES.SUPPLIER_PAYMENTS, key: 'supplierPayments' },
+    { name: STORES.STOCK_ADJUSTMENTS, key: 'stockAdjustments' },
+    { name: STORES.CUSTOMERS, key: 'customers' },
+    { name: STORES.EXPENSES, key: 'expenses' }
+  ]
+  const stores = Array.isArray(storesFilter) && storesFilter.length > 0
+    ? allStores.filter((s) => storesFilter.includes(s.name))
+    : allStores
 
   // Try Firebase first if online
   if (isOnline() && isFirebaseConfigured() && db) {
     try {
-      console.log('🔄 Reading from Firebase (primary storage)...')
-      
-      const data = {
-        inventory: [],
-        transactions: [],
-        suppliers: [],
-        purchaseOrders: [],
-        goodsReceivedNotes: [],
-        supplierPayments: [],
-        stockAdjustments: [],
-        customers: [],
-        expenses: [],
-        settings: {
-          storeName: 'Whiskey Ballet',
-          currency: 'KES',
-          vatRate: 0.16,
-          vatEnabled: true,
-          spendingLimitPercentage: 50,
-          enableSpendingAlerts: true,
-          lastBackupDate: null
-        },
-        lastSync: new Date().toISOString()
-      }
-
-      const stores = [
-        { name: STORES.INVENTORY, key: 'inventory' },
-        { name: STORES.TRANSACTIONS, key: 'transactions' },
-        { name: STORES.SUPPLIERS, key: 'suppliers' },
-        { name: STORES.PURCHASE_ORDERS, key: 'purchaseOrders' },
-        { name: STORES.GOODS_RECEIVED_NOTES, key: 'goodsReceivedNotes' },
-        { name: STORES.SUPPLIER_PAYMENTS, key: 'supplierPayments' },
-        { name: STORES.STOCK_ADJUSTMENTS, key: 'stockAdjustments' },
-        { name: STORES.CUSTOMERS, key: 'customers' },
-        { name: STORES.EXPENSES, key: 'expenses' }
-      ]
-
-      // Read each store from Firebase
+      // Read only requested stores from Firebase
       for (const store of stores) {
         const collectionRef = collection(db, 'organizations', adminId, store.name)
         const snapshot = await getDocs(collectionRef)
         const isInventory = store.name === STORES.INVENTORY
-        if (isInventory) {
-          console.log(`🔍 Firestore inventory: Found ${snapshot.docs.length} documents in collection`)
-        }
         let rows = snapshot.docs.map(docSnap => {
           const d = docSnap.data()
           // INVENTORY: keep numeric id from data (doc id is branch-scoped, e.g. b_Nakuru_1)
@@ -359,37 +354,25 @@ export async function readSharedDataOnline(adminId, includeDeleted = false) {
           rows = rows.map(({ _docId, ...rest }) => rest)
         }
 
-        // IMPORTANT (plain English):
-        // We DO NOT use `where('isDeleted','!=',true)` here because Firestore excludes
-        // documents that don't have the field at all (which makes freshly imported items "disappear").
-        // Instead, we filter in code for backward compatibility.
-        if (isInventory && rows.length > 0) {
-          const beforeFilter = rows.length
-          const withDeletedAt = rows.filter(item => item?.deletedAt).length
-          const withIsDeleted = rows.filter(item => item?.isDeleted === true).length
-          console.log(`🔍 Inventory read: ${beforeFilter} docs, ${withDeletedAt} have deletedAt, ${withIsDeleted} have isDeleted=true`)
-        }
+        // Filter deleted in code (Firestore where isDeleted!=true excludes docs without the field)
         data[store.key] = includeDeleted
           ? rows
           : rows.filter((item) => item?.isDeleted !== true && !item?.deletedAt)
-        
-        console.log(`📦 Read ${data[store.key].length} items from Firebase ${store.name}${includeDeleted ? ' (including deleted)' : ' (active only)'}`)
       }
 
-      // Read settings
-      const settingsRef = doc(db, 'organizations', adminId, 'settings', 'config')
-      const settingsSnap = await getDoc(settingsRef)
-      if (settingsSnap.exists()) {
-        data.settings = settingsSnap.data()
+      // Read settings only when doing full read (partial read must not overwrite cache with empty)
+      if (!storesFilter || storesFilter.length === 0) {
+        const settingsRef = doc(db, 'organizations', adminId, 'settings', 'config')
+        const settingsSnap = await getDoc(settingsRef)
+        if (settingsSnap.exists()) {
+          data.settings = settingsSnap.data()
+        }
+        // Update IndexedDB cache in background (full read only)
+        cacheToIndexedDB(data, adminId).catch(err =>
+          console.warn('Background cache update failed:', err)
+        )
       }
 
-      console.log('✅ Firebase read complete')
-      
-      // Update IndexedDB cache in background
-      cacheToIndexedDB(data, adminId).catch(err => 
-        console.warn('Background cache update failed:', err)
-      )
-      
       return data
     } catch (error) {
       console.error('❌ Firebase read failed, falling back to IndexedDB cache:', error)
@@ -397,32 +380,29 @@ export async function readSharedDataOnline(adminId, includeDeleted = false) {
   }
 
   // Fallback to IndexedDB cache
-  console.log('📴 Reading from IndexedDB cache (offline mode)')
-  
+  const storeToKey = {
+    [STORES.INVENTORY]: 'inventory',
+    [STORES.TRANSACTIONS]: 'transactions',
+    [STORES.SUPPLIERS]: 'suppliers',
+    [STORES.PURCHASE_ORDERS]: 'purchaseOrders',
+    [STORES.GOODS_RECEIVED_NOTES]: 'goodsReceivedNotes',
+    [STORES.SUPPLIER_PAYMENTS]: 'supplierPayments',
+    [STORES.STOCK_ADJUSTMENTS]: 'stockAdjustments',
+    [STORES.CUSTOMERS]: 'customers',
+    [STORES.EXPENSES]: 'expenses'
+  }
+  const toRead = storesFilter?.length > 0 ? storesFilter : Object.keys(storeToKey)
   try {
-    const data = {
-      inventory: await getAllItems(STORES.INVENTORY, adminId, includeDeleted),
-      transactions: await getAllItems(STORES.TRANSACTIONS, adminId, includeDeleted),
-      suppliers: await getAllItems(STORES.SUPPLIERS, adminId, includeDeleted),
-      purchaseOrders: await getAllItems(STORES.PURCHASE_ORDERS, adminId, includeDeleted),
-      goodsReceivedNotes: await getAllItems(STORES.GOODS_RECEIVED_NOTES, adminId, includeDeleted),
-      supplierPayments: await getAllItems(STORES.SUPPLIER_PAYMENTS, adminId, includeDeleted),
-      stockAdjustments: await getAllItems(STORES.STOCK_ADJUSTMENTS, adminId, includeDeleted),
-      customers: await getAllItems(STORES.CUSTOMERS, adminId, includeDeleted),
-      expenses: await getAllItems(STORES.EXPENSES, adminId, includeDeleted),
-      settings: await getItem(STORES.SETTINGS, adminId, adminId) || {
-        storeName: 'Whiskey Ballet',
-        currency: 'KES',
-        vatRate: 0.16,
-        vatEnabled: true,
-        spendingLimitPercentage: 50,
-        enableSpendingAlerts: true,
-        lastBackupDate: null
-      },
-      lastSync: null
+    for (const storeName of toRead) {
+      const key = storeToKey[storeName]
+      if (key) {
+        data[key] = await getAllItems(storeName, adminId, includeDeleted)
+      }
     }
-
-    console.log('✅ IndexedDB cache read complete')
+    if (!storesFilter || storesFilter.length === 0) {
+      data.settings = await getItem(STORES.SETTINGS, adminId, adminId) || data.settings
+    }
+    data.lastSync = null
     return data
   } catch (error) {
     console.error('❌ IndexedDB read failed:', error)
