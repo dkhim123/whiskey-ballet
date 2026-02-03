@@ -275,7 +275,7 @@ export default function AddProductModal({ onAdd, onClose }) {
               <input
                 type="text"
                 name="name"
-                value={formData.name}
+                value={formData.name ?? ""}
                 onChange={handleChange}
                 className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary bg-card text-foreground"
                 placeholder="e.g., Johnnie Walker Black Label"
@@ -286,7 +286,7 @@ export default function AddProductModal({ onAdd, onClose }) {
               <label className="block text-sm font-medium text-foreground mb-2">Category *</label>
               <select
                 name="category"
-                value={formData.category}
+                value={formData.category ?? ""}
                 onChange={handleChange}
                 className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary bg-card text-foreground"
               >
@@ -306,7 +306,7 @@ export default function AddProductModal({ onAdd, onClose }) {
               <input
                 type="text"
                 name="sku"
-                value={formData.sku}
+                value={formData.sku ?? ""}
                 onChange={handleChange}
                 className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary bg-card text-foreground"
                 placeholder="Scan barcode or enter SKU..."
@@ -318,7 +318,7 @@ export default function AddProductModal({ onAdd, onClose }) {
               <input
                 type="number"
                 name="quantity"
-                value={formData.quantity}
+                value={formData.quantity ?? 0}
                 onChange={handleChange}
                 className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary bg-card text-foreground"
                 placeholder="e.g., 10"
@@ -342,7 +342,7 @@ export default function AddProductModal({ onAdd, onClose }) {
                 <input
                   type="number"
                   name="costPrice"
-                  value={formData.costPrice}
+                  value={formData.costPrice ?? 0}
                   onChange={handleChange}
                   className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D4AF37] focus:border-[#D4AF37] bg-card text-foreground"
                   min="0"
@@ -427,7 +427,7 @@ export default function AddProductModal({ onAdd, onClose }) {
                 <label className="block text-sm font-medium text-foreground mb-2">Bottle Size</label>
                 <select
                   name="bottleSize"
-                  value={formData.bottleSize}
+                  value={formData.bottleSize ?? ""}
                   onChange={handleChange}
                   className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D4AF37] focus:border-[#D4AF37] bg-card text-foreground"
                 >
@@ -450,7 +450,7 @@ export default function AddProductModal({ onAdd, onClose }) {
                 <input
                   type="text"
                   name="kebsNumber"
-                  value={formData.kebsNumber}
+                  value={formData.kebsNumber ?? ""}
                   onChange={handleChange}
                   className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D4AF37] focus:border-[#D4AF37] bg-card text-foreground"
                   placeholder="KEBS-2024-XXXX"
@@ -460,7 +460,7 @@ export default function AddProductModal({ onAdd, onClose }) {
                 <label className="block text-sm font-medium text-foreground mb-2">Inventory Unit</label>
                 <select
                   name="inventoryUnits"
-                  value={formData.inventoryUnits}
+                  value={formData.inventoryUnits ?? ""}
                   onChange={handleChange}
                   className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#D4AF37] focus:border-[#D4AF37] bg-card text-foreground"
                 >
@@ -497,7 +497,7 @@ export default function AddProductModal({ onAdd, onClose }) {
               <input
                 type="date"
                 name="expiryDate"
-                value={formData.expiryDate}
+                value={formData.expiryDate ?? ""}
                 onChange={handleChange}
                 className="w-full px-4 py-2 border-2 border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary bg-card text-foreground"
                 min={new Date().toISOString().split('T')[0]}

@@ -101,9 +101,9 @@ export default function ManagerDashboard({ currentUser }) {
         const filteredInventory = selectedBranch ? (data.inventory || []).filter(i => normalizeBranchId(i.branchId) === normBranch) : (data.inventory || [])
         let filteredTransactions = selectedBranch ? (data.transactions || []).filter(t => normalizeBranchId(t.branchId) === normBranch) : (data.transactions || [])
         
-        // Filter cashiers by selected branch
+        // Filter cashiers by selected branch (normalized)
         const branchCashiers = selectedBranch 
-          ? users.filter(u => u.role === 'cashier' && u.branchId === selectedBranch)
+          ? users.filter(u => u.role === 'cashier' && normalizeBranchId(u.branchId) === normBranch)
           : users.filter(u => u.role === 'cashier')
         setCashiers(branchCashiers)
         

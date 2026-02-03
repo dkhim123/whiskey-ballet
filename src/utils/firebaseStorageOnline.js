@@ -44,6 +44,38 @@ function isOnline() {
 }
 
 /**
+ * Firestore does not accept undefined. Remove undefined values so writes succeed.
+ * Exported for syncManager.
+ */
+export function sanitizeForFirestore(obj) {
+  if (obj == null || typeof obj !== 'object') return obj
+  const out = {}
+  for (const key of Object.keys(obj)) {
+    if (obj[key] !== undefined) out[key] = obj[key]
+  }
+  return out
+}
+
+/** Safe branch key for Firestore doc IDs (inventory is branch-scoped to avoid cross-branch overwrites). Exported for syncManager fullSync. */
+export function inventoryDocId(item) {
+  const branchId = item?.branchId != null && item.branchId !== '' ? String(item.branchId) : 'unassigned'
+  const safeBranch = branchId.replace(/\//g, '_').replace(/\s/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+  const id = item?.id != null ? item.id : 0
+  return `b_${safeBranch}_${id}`
+}
+
+/** Extract branch prefix from an inventory doc id (b_safeBranch_id) for branch-isolation deletes. */
+function branchPrefixFromInventoryDocId(docId) {
+  if (!docId || typeof docId !== 'string' || !docId.startsWith('b_')) return ''
+  const withoutB = docId.slice(2)
+  const lastUnderscore = withoutB.lastIndexOf('_')
+  if (lastUnderscore === -1) return withoutB
+  const suffix = withoutB.slice(lastUnderscore + 1)
+  if (/^\d+$/.test(suffix)) return withoutB.slice(0, lastUnderscore)
+  return withoutB
+}
+
+/**
  * Write data to Firebase (primary) and cache to IndexedDB
  */
 export async function writeSharedDataOnline(data, adminId) {
@@ -80,30 +112,71 @@ export async function writeSharedDataOnline(data, adminId) {
       
       // Write each store to Firebase
       for (const store of stores) {
-        if (store.items.length === 0) continue
-
         const collectionRef = collection(db, 'organizations', adminId, store.name)
-        
-        // Use batch writes for efficiency (max 500 per batch)
-        const batchSize = 500
-        for (let i = 0; i < store.items.length; i += batchSize) {
-          const batch = writeBatch(db)
-          const chunk = store.items.slice(i, i + batchSize)
+        const isInventory = store.name === STORES.INVENTORY
 
-          for (const item of chunk) {
-            // Firestore document IDs must be strings (CSV import uses numeric IDs)
-            const docRef = doc(collectionRef, String(item.id))
-            batch.set(docRef, {
-              ...item,
-              adminId, // Ensure adminId is set
-              updatedAt: serverTimestamp()
-            }, { merge: true })
+        // INVENTORY: delete Firestore docs that are no longer in payload, ONLY for branches present in the payload.
+        // So deleting all in CBD never removes Nakuru docs (branch isolation).
+        let idsToDelete = []
+        if (isInventory) {
+          const existingSnap = await getDocs(collectionRef)
+          const idsToKeep = new Set((store.items || []).map((item) => inventoryDocId(item)))
+          const payloadBranchPrefixes = new Set(
+            (store.items || []).map((item) => {
+              const branchId = item?.branchId != null && item.branchId !== '' ? String(item.branchId) : 'unassigned'
+              return branchId.replace(/\//g, '_').replace(/\s/g, '_').replace(/[^a-zA-Z0-9_-]/g, '_')
+            })
+          )
+          idsToDelete = existingSnap.docs
+            .filter(
+              (d) =>
+                !idsToKeep.has(d.id) && payloadBranchPrefixes.has(branchPrefixFromInventoryDocId(d.id))
+            )
+            .map((d) => d.id)
+          if (idsToDelete.length > 0) {
+            console.log(`🗑️ Inventory: removing ${idsToDelete.length} obsolete doc(s) from Firestore (branches in payload only)`)
           }
-
-          await batch.commit()
         }
-        
-        console.log(`✅ Wrote ${store.items.length} items to Firebase ${store.name}`)
+
+        // Skip set phase only if nothing to write (non-inventory) or nothing to write and no deletes (inventory)
+        if (store.items.length > 0) {
+          const batchSize = 500
+          for (let i = 0; i < store.items.length; i += batchSize) {
+            const batch = writeBatch(db)
+            const chunk = store.items.slice(i, i + batchSize)
+
+            for (const item of chunk) {
+              // INVENTORY: use branch-scoped doc ID so different branches can have same numeric id without overwriting
+              const docId = isInventory ? inventoryDocId(item) : String(item.id)
+              const docRef = doc(collectionRef, docId)
+              // Firestore rejects undefined; strip so deletedAt/deletedBy etc. don't break writes
+              const payload = sanitizeForFirestore({
+                ...item,
+                adminId,
+                updatedAt: serverTimestamp()
+              })
+              batch.set(docRef, payload, { merge: true })
+            }
+
+            await batch.commit()
+          }
+          console.log(`✅ Wrote ${store.items.length} items to Firebase ${store.name}`)
+        }
+
+        // INVENTORY: batch-delete obsolete docs (max 500 per batch)
+        if (isInventory && idsToDelete.length > 0) {
+          const deleteBatchSize = 500
+          for (let i = 0; i < idsToDelete.length; i += deleteBatchSize) {
+            const batch = writeBatch(db)
+            const chunk = idsToDelete.slice(i, i + deleteBatchSize)
+            for (const docId of chunk) {
+              const docRef = doc(collectionRef, docId)
+              batch.delete(docRef)
+            }
+            await batch.commit()
+          }
+          console.log(`✅ Deleted ${idsToDelete.length} obsolete inventory doc(s) from Firestore`)
+        }
       }
 
       // Write settings
@@ -256,20 +329,51 @@ export async function readSharedDataOnline(adminId, includeDeleted = false) {
       for (const store of stores) {
         const collectionRef = collection(db, 'organizations', adminId, store.name)
         const snapshot = await getDocs(collectionRef)
-        const rows = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }))
+        const isInventory = store.name === STORES.INVENTORY
+        if (isInventory) {
+          console.log(`🔍 Firestore inventory: Found ${snapshot.docs.length} documents in collection`)
+        }
+        let rows = snapshot.docs.map(docSnap => {
+          const d = docSnap.data()
+          // INVENTORY: keep numeric id from data (doc id is branch-scoped, e.g. b_Nakuru_1)
+          const id = isInventory && (d.id !== undefined && d.id !== null) ? d.id : (d.id ?? docSnap.id)
+          const row = { ...d, id }
+          if (isInventory) row._docId = docSnap.id
+          return row
+        })
+        // INVENTORY: dedupe by (branchId, id) - prefer branch-scoped doc ids (b_*) over legacy numeric doc ids
+        if (isInventory && rows.length > 0) {
+          const byKey = new Map()
+          rows.forEach(item => {
+            const branch = item?.branchId != null ? String(item.branchId) : 'unassigned'
+            const key = `${branch}_${item?.id}`
+            const existing = byKey.get(key)
+            const preferThis = (item._docId && String(item._docId).startsWith('b_'))
+            if (!existing || (preferThis && !String(existing._docId).startsWith('b_'))) {
+              const { _docId, ...rest } = item
+              byKey.set(key, rest)
+            }
+          })
+          rows = Array.from(byKey.values())
+        } else if (isInventory && rows.some(r => r._docId !== undefined)) {
+          rows = rows.map(({ _docId, ...rest }) => rest)
+        }
 
         // IMPORTANT (plain English):
         // We DO NOT use `where('isDeleted','!=',true)` here because Firestore excludes
         // documents that don't have the field at all (which makes freshly imported items "disappear").
         // Instead, we filter in code for backward compatibility.
+        if (isInventory && rows.length > 0) {
+          const beforeFilter = rows.length
+          const withDeletedAt = rows.filter(item => item?.deletedAt).length
+          const withIsDeleted = rows.filter(item => item?.isDeleted === true).length
+          console.log(`🔍 Inventory read: ${beforeFilter} docs, ${withDeletedAt} have deletedAt, ${withIsDeleted} have isDeleted=true`)
+        }
         data[store.key] = includeDeleted
           ? rows
           : rows.filter((item) => item?.isDeleted !== true && !item?.deletedAt)
         
-        console.log(`📦 Read ${data[store.key].length} items from Firebase ${store.name}`)
+        console.log(`📦 Read ${data[store.key].length} items from Firebase ${store.name}${includeDeleted ? ' (including deleted)' : ' (active only)'}`)
       }
 
       // Read settings

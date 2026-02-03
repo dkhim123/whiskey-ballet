@@ -31,8 +31,14 @@ export function subscribeToCollection({ db, collectionPath, adminId, onUpdate, o
     const unsubscribe = onSnapshot(
       colRef,
       (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        onUpdate(data);
+        // Preserve stored numeric id when present (e.g. inventory uses id: 1,2,...; Firestore doc id is b_branch_1).
+        // Using doc.id for everything would break inventory branch isolation on subsequent writes.
+        const data = snapshot.docs.map(doc => {
+          const d = doc.data()
+          const id = d?.id !== undefined && d?.id !== null ? d.id : doc.id
+          return { ...d, id }
+        })
+        onUpdate(data)
       },
       (error) => {
         if (onError) onError(error);

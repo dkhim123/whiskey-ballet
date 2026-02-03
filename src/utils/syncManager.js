@@ -20,6 +20,7 @@ import {
   where
 } from 'firebase/firestore'
 import { getDB, STORES, putBatch, getAllItems, getSyncQueue, saveSyncQueue } from './indexedDBStorage'
+import { inventoryDocId } from './firebaseStorageOnline'
 
 const SYNC_QUEUE_KEY = 'pos-sync-queue'
 const LAST_SYNC_KEY = 'pos-last-sync'
@@ -552,11 +553,11 @@ class SyncManager {
     switch (type) {
       case 'create':
       case 'update':
-        await setDoc(docRef, {
+        await setDoc(docRef, sanitizeForFirestore({
           ...data,
           updatedAt: serverTimestamp(),
           syncedAt: serverTimestamp()
-        }, { merge: true })
+        }), { merge: true })
         break
         
       case 'delete':
@@ -610,6 +611,8 @@ class SyncManager {
           console.log(`📤 Syncing ${items.length} items from ${storeName}...`)
 
           // Use batch writes for efficiency (max 500 per batch)
+          // INVENTORY: use branch-scoped doc ID so we don't overwrite other branches (numeric id would collide)
+          const isInventory = storeName === STORES.INVENTORY
           const batchSize = 500
           for (let i = 0; i < items.length; i += batchSize) {
             const batch = writeBatch(db)
@@ -617,8 +620,9 @@ class SyncManager {
 
             for (const item of chunk) {
               const collectionRef = collection(db, 'organizations', adminId, storeName)
-              const docRef = doc(collectionRef, item.id)
-              
+              const docId = isInventory ? inventoryDocId(item) : String(item.id)
+              const docRef = doc(collectionRef, docId)
+
               batch.set(docRef, {
                 ...item,
                 syncedAt: serverTimestamp(),

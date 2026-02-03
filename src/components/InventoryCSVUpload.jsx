@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { readSharedData, writeSharedData } from "../utils/storage"
 import { getAdminIdForStorage } from "../utils/auth"
+import { getAllBranches } from "../services/branchService"
 
 export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, selectedBranch }) {
   const [isDragging, setIsDragging] = useState(false)
@@ -12,6 +13,21 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [pastedCSV, setPastedCSV] = useState("")
+  const [branchNames, setBranchNames] = useState([]) // For display only: "Importing to: CBD"
+
+  useEffect(() => {
+    let cancelled = false
+    getAllBranches()
+      .then((list) => { if (!cancelled) setBranchNames((list || []).filter((b) => b.isActive)) })
+      .catch(() => { if (!cancelled) setBranchNames([]) })
+    return () => { cancelled = true }
+  }, [])
+
+  // Branch manager / cashier: always their branch. Admin: page-selected branch only.
+  const targetBranch = (currentUser?.role === "admin"
+    ? (selectedBranch || "").trim()
+    : (currentUser?.branchId || selectedBranch || "").trim()
+  )
 
   // Auto-close success message after 5 seconds
   useEffect(() => {
@@ -89,13 +105,10 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
   // - uploading a CSV file
   // - pasting CSV text into a textarea
   const importCSVText = async (text) => {
-    // CRITICAL: Prevent import without a target branch
-    if (!selectedBranch) {
-      if (currentUser?.role === 'admin') {
-        setError('Please select a branch before importing. This prevents data from being assigned to the wrong branch.')
-      } else {
-        setError('Your account is missing branch assignment. Please contact admin or re-login.')
-      }
+    if (!targetBranch) {
+      setError(currentUser?.role === "admin"
+        ? "Select a branch in the page filter above, then open Import CSV again."
+        : "Your account has no branch assigned. Contact admin.")
       return
     }
 
@@ -104,32 +117,39 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
     setResult(null)
 
     try {
-      const parsedProducts = parseCSV(text, selectedBranch)
+      const parsedProducts = parseCSV(text, targetBranch)
       if (parsedProducts.length === 0) {
         throw new Error('No valid products found in CSV')
       }
 
       const adminId = getAdminIdForStorage(currentUser)
-      const sharedData = await readSharedData(adminId)
+      // Read with includeDeleted so we have full picture and don't lose other branches' data
+      const sharedData = await readSharedData(adminId, true)
       const existingInventory = sharedData.inventory || []
 
       let created = 0
       let updated = 0
       const errors = []
 
-      let nextId = existingInventory.length > 0
-        ? Math.max(...existingInventory.map(p => p.id || 0)) + 1
-        : 1
+      const numericIds = existingInventory.map(p => typeof p.id === 'number' ? p.id : parseInt(p.id, 10)).filter(n => !Number.isNaN(n))
+      let nextId = numericIds.length > 0 ? Math.max(...numericIds, 0) + 1 : 1
 
-      // CRITICAL: Only work with items from the target branch to prevent cross-branch contamination
-      // Normalize branch IDs for comparison (case-insensitive, trimmed)
+      // CRITICAL: Split inventory by target branch so CSV only affects one branch. Match by branch ID and by branch name
+      // so that legacy data with branchId = "CBD" (name) is still treated as target when user selected CBD (id may be "branch_xxx").
       const normalizeBranchId = (id) => (id != null ? String(id).trim().toLowerCase() : '')
-      const normalizedSelectedBranch = normalizeBranchId(selectedBranch)
-      
-      const targetBranchItems = existingInventory.filter(p => normalizeBranchId(p.branchId) === normalizedSelectedBranch)
-      const otherBranchItems = existingInventory.filter(p => normalizeBranchId(p.branchId) !== normalizedSelectedBranch)
-      
-      console.log(`📦 CSV Import: Target branch "${selectedBranch}" has ${targetBranchItems.length} items, other branches have ${otherBranchItems.length} items`)
+      const normalizedTargetBranch = normalizeBranchId(targetBranch)
+      const branchList = branchNames.length > 0 ? branchNames : (await getAllBranches().then((list) => (list || []).filter((b) => b.isActive)))
+      const selectedBranchMeta = branchList.find((b) => normalizeBranchId(b.id) === normalizedTargetBranch)
+      const normalizedTargetName = selectedBranchMeta?.name ? normalizeBranchId(selectedBranchMeta.name) : ''
+
+      const isTargetBranchItem = (p) => {
+        const norm = normalizeBranchId(p.branchId)
+        return norm === normalizedTargetBranch || (normalizedTargetName && norm === normalizedTargetName)
+      }
+      const targetBranchItems = existingInventory.filter(isTargetBranchItem)
+      const otherBranchItems = existingInventory.filter((p) => !isTargetBranchItem(p))
+
+      console.log(`📦 CSV Import: Target branch "${targetBranch}" has ${targetBranchItems.length} items, other branches have ${otherBranchItems.length} items`)
       
       // Log branch distribution for debugging
       const branchCounts = {}
@@ -158,9 +178,9 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
             )
           }
 
-          if (existingIndex === -1) {
+          if (existingIndex === -1 && product.name) {
             existingIndex = updatedBranchInventory.findIndex(p =>
-              p.name.toLowerCase() === product.name.toLowerCase()
+              p.name && String(p.name).toLowerCase() === String(product.name).toLowerCase()
             )
           }
 
@@ -169,20 +189,23 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
               ...updatedBranchInventory[existingIndex],
               ...product,
               id: updatedBranchInventory[existingIndex].id,
-              branchId: selectedBranch, // Ensure branch assignment is preserved
+              branchId: targetBranch, // Always use modal-selected branch
               updatedAt: new Date().toISOString(),
               updatedBy: {
                 id: currentUser?.id || '',
                 name: currentUser?.name || currentUser?.email || 'Unknown',
                 role: currentUser?.role || ''
-              }
+              },
+              // Clear soft-delete so re-imported / updated items become active again (use null; Firestore rejects undefined)
+              deletedAt: null,
+              deletedBy: null
             }
             updated++
           } else {
             updatedBranchInventory.push({
               ...product,
               id: nextId++,
-              branchId: selectedBranch, // Ensure new items get correct branch
+              branchId: targetBranch, // Always use modal-selected branch
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               createdBy: {
@@ -198,18 +221,28 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
         }
       })
 
-      // CRITICAL: Merge updated branch items with other branches' items
-      const finalInventory = [
-        ...otherBranchItems, // Preserve all items from other branches
-        ...updatedBranchInventory.filter(p => p && typeof p === 'object' && p.id !== undefined && p.id !== null)
-      ]
+      // Merge: keep ALL other branches unchanged, replace only this branch's list. Preserve by branchId, not by id.
+      // CRITICAL: Filter out deleted items from other branches so we only write active inventory
+      const activeOtherBranchItems = otherBranchItems.filter(item => !item.deletedAt)
+      const validUpdated = updatedBranchInventory
+        .filter(p => p && typeof p === 'object' && p.id !== undefined && p.id !== null && !p.deletedAt)
+        .map(p => ({ ...p, branchId: targetBranch }))
+      const finalInventory = [...activeOtherBranchItems, ...validUpdated]
       
-      console.log(`✅ CSV Import: Final inventory has ${finalInventory.length} items (${updatedBranchInventory.length} from target branch, ${otherBranchItems.length} from other branches)`)
+      console.log(`✅ CSV Import: Final inventory ${finalInventory.length} (other branches active: ${activeOtherBranchItems.length}, this branch: ${validUpdated.length})`)
 
       await writeSharedData({
         ...sharedData,
         inventory: finalInventory
       }, adminId)
+
+      // Small delay to ensure Firestore has indexed the new documents before we trigger UI update
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Verify write: read back to ensure data is persisted and visible
+      const verifyData = await readSharedData(adminId, false) // Read active only to match what UI will see
+      const verifyCount = (verifyData.inventory || []).length
+      console.log(`✅ CSV Import: Verified write - ${verifyCount} active items visible in storage`)
 
       setResult({
         success: true,
@@ -219,8 +252,11 @@ export default function InventoryCSVUpload({ currentUser, onInventoryUpdate, sel
         errors
       })
 
+      // Pass the verified data (or finalInventory if verify failed) so UI updates immediately
+      // Also pass targetBranch so parent knows which branch to filter for
       if (onInventoryUpdate) {
-        onInventoryUpdate(finalInventory)
+        const dataToPass = verifyData.inventory && verifyData.inventory.length > 0 ? verifyData.inventory : finalInventory
+        onInventoryUpdate(dataToPass, targetBranch)
       }
     } catch (err) {
       setError(err?.message || String(err))
@@ -435,9 +471,9 @@ Beer Tusker,SKU003,11223344,200,150,100,Beer,20,XYZ Distributors,bottle,Lager 50
             <li>• Column names are case-insensitive</li>
             <li>• Use comma (,) as delimiter</li>
           </ul>
-          {selectedBranch && (
+          {targetBranch && (
             <div className="mt-3 p-2 bg-primary/10 border border-primary/20 rounded text-xs">
-              <strong className="text-primary">⚠️ Branch Isolation:</strong> All imported products will be assigned to <strong>{selectedBranch}</strong> branch. Any branchId column in your CSV will be ignored.
+              <strong className="text-primary">Importing to:</strong> <strong>{branchNames.find((b) => b.id === targetBranch)?.name || targetBranch}</strong> (automatic from your current branch selection). CSV branchId is ignored.
             </div>
           )}
         </div>

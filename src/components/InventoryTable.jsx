@@ -9,12 +9,41 @@ import { getImageSrc } from "../utils/images"
 // 250ms provides smooth UX while reducing unnecessary re-renders
 const RESIZE_DEBOUNCE_DELAY = 250
 
-export default function InventoryTable({ items, onEdit, onBarcode, onAdjust, branchId }) {
+export default function InventoryTable({
+  items,
+  onEdit,
+  onBarcode,
+  onAdjust,
+  branchId,
+  enableSelection = false,
+  selectedIds = [],
+  onToggleSelect,
+  onSelectAll,
+  onSelectNone,
+  rowNumberStart = 0
+}) {
   const [isMobile, setIsMobile] = useState(false)
   const timeoutIdRef = useRef(null)
 
-  // Filter items by branchId if provided
-  const filteredItems = branchId ? (Array.isArray(items) ? items.filter(i => i.branchId === branchId) : []) : (Array.isArray(items) ? items : [])
+  // Filter items by branchId if provided; then dedupe by (branchId, id) so React keys are unique
+  const filteredItems = (() => {
+    const list = branchId ? (Array.isArray(items) ? items.filter(i => i.branchId === branchId) : []) : (Array.isArray(items) ? items : [])
+    const seen = new Set()
+    return list.filter((i) => {
+      const key = `${i.branchId ?? 'u'}_${i.id}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  })()
+  const allOnPageSelected = enableSelection && filteredItems.length > 0 && filteredItems.every(i => selectedIds.includes(i.id))
+  const someSelected = enableSelection && filteredItems.some(i => selectedIds.includes(i.id))
+  const headerCheckRef = useRef(null)
+  useEffect(() => {
+    const el = headerCheckRef.current
+    if (!el) return
+    el.indeterminate = !!(someSelected && !allOnPageSelected)
+  }, [someSelected, allOnPageSelected])
 
   useEffect(() => {
     // Only run in browser environment
@@ -66,14 +95,27 @@ export default function InventoryTable({ items, onEdit, onBarcode, onAdjust, bra
   if (isMobile) {
     return (
       <div className="space-y-3">
-        {filteredItems.map((item) => {
+        {filteredItems.map((item, idx) => {
           const costPrice = item.costPrice || 0
           const sellingPrice = item.sellingPrice || item.price || 0
           const margin = costPrice > 0 ? ((sellingPrice - costPrice) / costPrice * 100) : 0
+          const rowKey = `inv_${item.branchId ?? 'u'}_${item.id}_${idx}`
 
+          const rowNum = rowNumberStart + idx + 1
           return (
-            <div key={item.id} className="bg-card rounded-xl border border-border p-4 shadow-sm">
+            <div key={rowKey} className="bg-card rounded-xl border border-border p-4 shadow-sm">
               <div className="flex gap-3 mb-3">
+                <span className="shrink-0 w-7 h-7 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground" title="No.">{rowNum}</span>
+                {enableSelection && (
+                  <label className="flex items-center shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(item.id)}
+                      onChange={() => onToggleSelect?.(item.id)}
+                      className="rounded border-border text-primary focus:ring-primary"
+                    />
+                  </label>
+                )}
                 <img 
                   src={getImageSrc(item.image || "/diverse-products-still-life.png")}
                   alt={item.name}
@@ -160,6 +202,19 @@ export default function InventoryTable({ items, onEdit, onBarcode, onAdjust, bra
       <table className="w-full">
         <thead className="bg-muted/30 border-b border-border/50">
           <tr>
+            {enableSelection && (
+              <th className="px-4 py-4 text-left w-12">
+                <label className="flex items-center cursor-pointer">
+                  <input
+                    ref={headerCheckRef}
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={() => allOnPageSelected ? onSelectNone?.() : onSelectAll?.()}
+                    className="rounded border-border text-primary focus:ring-primary"
+                  />
+                </label>
+              </th>
+            )}
             <th className="px-6 py-4 text-left text-sm font-bold text-foreground">Product</th>
             <th className="px-6 py-4 text-left text-sm font-bold text-foreground">SKU</th>
             <th className="px-6 py-4 text-left text-sm font-bold text-foreground">Category</th>
@@ -176,9 +231,23 @@ export default function InventoryTable({ items, onEdit, onBarcode, onAdjust, bra
             const costPrice = item.costPrice || 0
             const sellingPrice = item.sellingPrice || item.price || 0
             const margin = costPrice > 0 ? ((sellingPrice - costPrice) / costPrice * 100) : 0
-            
+            const rowKey = `inv_${item.branchId ?? 'u'}_${item.id}_${idx}`
+
             return (
-              <tr key={item.id} className="border-b border-border/30 hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-all duration-200">
+              <tr key={rowKey} className="border-b border-border/30 hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-all duration-200">
+                {enableSelection && (
+                  <td className="px-4 py-4 w-12">
+                    <label className="flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(item.id)}
+                        onChange={() => onToggleSelect?.(item.id)}
+                        className="rounded border-border text-primary focus:ring-primary"
+                      />
+                    </label>
+                  </td>
+                )}
+                <td className="px-4 py-4 text-center text-sm font-semibold text-muted-foreground w-14">{rowNumberStart + idx + 1}</td>
                 <td className="px-6 py-4 text-sm">
                   <div className="flex items-center gap-3">
                     <img 
